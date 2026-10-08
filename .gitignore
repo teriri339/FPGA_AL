@@ -1,0 +1,45 @@
+# ============================================================
+# 安路 TangDynasty 工程产物（不要入库）
+# ============================================================
+*/workspace/
+*/impl/
+*/pnr/
+*.bin
+*.bit
+*.bit.gz
+*.rbt
+*.bit.txt
+*.gise
+*.cfi
+*.svf
+*.jed
+*.flash
+*.fse
+
+# 日志 / 报告 / 临时文件
+*.log
+*.rpt
+*.rout
+*.jou
+*.tmp
+*.bak
+.~lock.*
+*~
+
+# 波形数据库（体积大）
+*.wdb
+*.wlf
+hw/sim/wave/
+hw/sim/work/
+hw/sim/modelsim.ini
+hw/sim/transcript
+
+# ============================================================
+# 通用
+# ============================================================
+.DS_Store
+Thumbs.db
+__pycache__/
+*.py[cod]
+.vscode/
+.idea/
