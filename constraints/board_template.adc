@@ -1,0 +1,13 @@
+# Fill this template only from the PH1P35A board schematic/manual.
+# Do not use the Xilinx XDC pins from the original project.
+#
+# set_io I_sys_clk        <PIN> -io_type LVCMOS33
+# create_clock -name sys_clk -period <ns> [get_ports I_sys_clk]
+# set_io I_mipi_clk_p     <PIN> -io_type <DIFF_IOSTANDARD>
+# set_io I_mipi_clk_n     <PIN> -io_type <DIFF_IOSTANDARD>
+# set_io I_mipi_data_p[0] <PIN> -io_type <DIFF_IOSTANDARD>
+# set_io I_mipi_data_n[0] <PIN> -io_type <DIFF_IOSTANDARD>
+# set_io O_hdmi_*         <PIN> -io_type <per board HDMI/DSI transmitter>
+#
+# MIPI and HDMI PHY ports normally belong to generated Anlogic IP wrappers,
+# not directly to src/ph1p35_video_top.v.

@@ -4,6 +4,7 @@
 */workspace/
 */impl/
 */pnr/
+*_Runs/
 *.bin
 *.bit
 *.bit.gz
@@ -18,7 +19,9 @@
 
 # 日志 / 报告 / 临时文件
 *.log
+*.logw
 *.rpt
+*.timingsummary
 *.rout
 *.jou
 *.tmp
@@ -43,3 +46,4 @@ __pycache__/
 *.py[cod]
 .vscode/
 .idea/
+*.recent_user_depot.ini
