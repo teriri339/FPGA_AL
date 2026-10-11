@@ -57,3 +57,7 @@
 
 新增 RTL 位于 `reference_edge_project/user_source/hdl_source/hx1p35_port/`。按键 0 已加入同步与约 10 ms 消抖，每按一次按 `原图 → 灰度 → 三色掩膜 → Sobel` 循环；按键 1 每按一次开关蜂鸣告警。为避免一键两用导致画面曝光同时变化，参考工程 `ae_set` 的手动曝光按键输入已固定为未按下，保留默认曝光参数。这些功能均不依赖 Xilinx IP；必须在安路 TD 中打开 `td_project/camera_to_dsi_display.al` 后，以该工程的 IP 和约束完成综合、布局布线与下载验证。
 
+## 历史文档
+
+仓库初始规划和第一版迁移说明已整理到 `docs/archive/`，同时保留对应 Git 提交号，便于回看和对照。
+
