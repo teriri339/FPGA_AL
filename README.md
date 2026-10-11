@@ -49,11 +49,11 @@
 
 在 `reference_edge_project` 的 MIPI → ISP → DDR 帧缓存 → HDMI 参考链路上，已加入纯 RTL 显示侧视觉功能：
 
-- 按键选择原图、灰度、三色目标二值图、轻量水平边缘图；
+- 按键循环选择原图、灰度、三色目标掩膜、真正的 3×3 Sobel 边缘图；
 - 红／绿／蓝高饱和目标的像素面积统计和上一帧包围框；
 - HDMI 画面目标框与状态条 OSD；
-- 检测到目标时驱动板载低有效蜂鸣器 `C12`；
+- 目标首次出现时驱动板载低有效蜂鸣器 `C12` 短鸣约 200 ms；
 - 保留并接入从旧工程剥离的 RGB↔YUV 定点转换公式。
 
-新增 RTL 位于 `reference_edge_project/user_source/hdl_source/hx1p35_port/`，按键模式为 `00` 原图、`01` 灰度、`10` 三色二值、`11` 边缘（`I_button` 为低有效）。这些功能均不依赖 Xilinx IP；必须在安路 TD 中打开 `td_project/camera_to_dsi_display.al` 后，以该工程的 IP 和约束完成综合、布局布线与下载验证。
+新增 RTL 位于 `reference_edge_project/user_source/hdl_source/hx1p35_port/`。按键 0 已加入同步与约 10 ms 消抖，每按一次按 `原图 → 灰度 → 三色掩膜 → Sobel` 循环；按键 1 每按一次开关蜂鸣告警。为避免一键两用导致画面曝光同时变化，参考工程 `ae_set` 的手动曝光按键输入已固定为未按下，保留默认曝光参数。这些功能均不依赖 Xilinx IP；必须在安路 TD 中打开 `td_project/camera_to_dsi_display.al` 后，以该工程的 IP 和约束完成综合、布局布线与下载验证。
 

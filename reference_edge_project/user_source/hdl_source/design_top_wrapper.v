@@ -164,6 +164,10 @@ module design_top_wrapper (
     wire        S_target_found;
     wire[23:0]  S_target_pixels;
     wire[1:0]   S_vision_mode;
+    wire        S_alarm_enable; //【HX1P35A-移植适配】按键可独立开关目标告警。
+    reg         S_target_found_d; //【HX1P35A-移植适配】检测目标出现沿，避免蜂鸣器持续鸣叫。
+    reg [23:0]  S_buzzer_count; //【HX1P35A-移植适配】74.25MHz 像素时钟下约 200ms 蜂鸣计数。
+    localparam [23:0] C_BUZZER_CYCLES = 24'd14850000; //【HX1P35A-移植适配】74250000 * 0.2s。
     reg         S_dbg_raw_seen;
     reg         S_dbg_isp_seen;
     reg         S_dbg_ddr_wr_seen;
@@ -208,13 +212,25 @@ module design_top_wrapper (
 
 
     assign O_screen_pwm = 1'b1;
-    assign S_vision_mode = ~I_button; //【HX1P35A-移植适配】按键低有效：00原图、01灰度、10颜色二值、11边缘。
-    assign O_buzzer_n = ~S_target_found; //【HX1P35A-移植适配】检测到目标时拉低板载蜂鸣器。
+    assign O_buzzer_n = ~(S_alarm_enable && (S_buzzer_count != 0)); //【HX1P35A-移植适配】目标首次出现时低有效鸣叫约 200ms。
     assign S_video_out_vsync = ~S_hdmi_vsync;
 	
 	
     assign S_rst_n 		= S_pll_lock;
     assign S_hdmi_rst_n = S_pll_lock;
+
+    //【HX1P35A-移植适配】目标由无到有时启动一次短鸣；目标持续存在不会反复触发。
+    always @(posedge S_hdmi_pixel_clk or negedge S_hdmi_rst_n) begin
+        if(!S_hdmi_rst_n) begin
+            S_target_found_d <= 1'b0;
+            S_buzzer_count <= 24'd0;
+        end else begin
+            S_target_found_d <= S_target_found;
+            if(!S_alarm_enable) S_buzzer_count <= 24'd0;
+            else if(S_target_found && !S_target_found_d) S_buzzer_count <= C_BUZZER_CYCLES;
+            else if(S_buzzer_count != 0) S_buzzer_count <= S_buzzer_count - 1'b1;
+        end
+    end
 
     always @(posedge S_csi_rx_clk or negedge S_rst_n) begin
         if(!S_rst_n)
@@ -448,7 +464,7 @@ module design_top_wrapper (
   ae_set u_ae_set (
       .I_clk(S_24m_clk),
       .I_rst(~S_rst_n),
-      .I_btn({I_button,2'b11}),
+      .I_btn(4'b1111), //【HX1P35A-移植适配】实体按键专用于视觉控制，避免切换模式时同时改变摄像头曝光。
       .I_cam_cfg_done(S_cam_cfg_done),
       .I_ae_cfg_done(S_ae_cfg_done),
       .O_ae_req(S_ae_req),
@@ -667,6 +683,12 @@ isp_top u_isp_top (
         .I_video_vsync       ( S_video_out_vsync    ),
         .I_video_rd_en       ( S_hdmi_de             ), //【HX1P35A-移植适配】保持原始显示有效区读帧，避免四拍算法延时造成首像素错位。
         .O_vdieo_data        ( S_video_rd_data      )
+    );
+
+    //【HX1P35A-移植适配】按键 0 每次按下循环切换显示模式；按键 1 每次按下切换蜂鸣器使能。
+    hx_button_mode_ctrl u_hx_button_mode_ctrl(
+        .I_clk(S_hdmi_pixel_clk), .I_rst_n(S_hdmi_rst_n), .I_button_n(I_button),
+        .O_mode(S_vision_mode), .O_alarm_enable(S_alarm_enable)
     );
 
     //【HX1P35A-移植适配】不修改 MIPI、DDR 或 HDMI 驱动，仅处理 DDR 读出的 RGB888 像素流。
