@@ -9,6 +9,7 @@ module hx_vision_pipeline #(
     input wire I_vsync, input wire I_hsync, input wire I_de,
     input wire I_user, input wire I_last, input wire [23:0] I_rgb,
     input wire [1:0] I_mode,
+    input wire [1:0] I_exposure_level, //【HX1P35A-移植适配】在 HDMI OSD 中显示当前曝光档位。
     output reg O_vsync, output reg O_hsync, output reg O_de,
     output reg O_user, output reg O_last, output reg [23:0] O_rgb,
     output reg O_target_found, output reg [23:0] O_target_pixels
@@ -161,7 +162,7 @@ module hx_vision_pipeline #(
     wire osd_background = stage_de && (draw_x < 11'd432) && (draw_y < 11'd32);
     wire osd_glyph = osd_background && (glyph_x < 3'd5) && (glyph_y < 3'd7) && glyph_bits[4-glyph_x];
 
-    //【HX1P35A-移植适配】第一行显示算法模式；第二行显示主颜色、目标中心坐标和像素面积。
+    //【HX1P35A-移植适配】第一行显示算法模式和 EXP:0~3 曝光档；第二行显示主颜色、目标中心坐标和像素面积。
     always @(*) begin
         osd_char = " ";
         osd_fg = 24'hffffff;
@@ -169,6 +170,7 @@ module hx_vision_pipeline #(
             osd_fg = 24'h40e0ff;
             case (osd_col)
                 0:osd_char="M"; 1:osd_char="O"; 2:osd_char="D"; 3:osd_char="E"; 4:osd_char=":";
+                14:osd_char="E"; 15:osd_char="X"; 16:osd_char="P"; 17:osd_char=":"; 18:osd_char=bcd_ascii({2'b00,I_exposure_level}); //【HX1P35A-移植适配】曝光档位提示。
                 default: begin
                     case (I_mode)
                         2'd0: case(osd_col) 6:osd_char="R";7:osd_char="A";8:osd_char="W";default:osd_char=" ";endcase

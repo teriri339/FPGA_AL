@@ -35,6 +35,7 @@ module ae_set
 input wire I_clk,
 input wire I_rst,
 input wire [3:0]I_btn,
+input wire I_exposure_step, //【HX1P35A-移植适配】24 MHz 域内消抖后的 KEY3 单周期曝光切换脉冲。
 input wire I_ae_cfg_done,
 input wire I_cam_cfg_done,
 output wire O_ae_req,
@@ -70,6 +71,7 @@ end
 	
 //	Use button to add / sub idelay values. I_button[0]:IncDatDly, [1]DecDatDly, [2]IncI_clkDly, [3]DecI_clkDly
 reg 	[3:0] 	r_button_0 = 0, r_button_1 = 0; 
+reg     [1:0]   r_exposure_level = 2'd2; //【HX1P35A-移植适配】记录已处理档位，避免重复发起 I2C 更新。
 // 720p60 uses VTS=1000. Exposure is expressed in half-line units, so 1990
 // is close to the legal maximum. AG=80 maps to the selected 4x gain setting.
 reg 	[15:0] 	r_ae_set = 1990, r_ag_set = 80; 
@@ -79,12 +81,21 @@ always @(posedge I_clk or posedge I_rst) begin
 		r_button_1 <= 0; 
 		r_ae_set <= 1990; 
 		r_ag_set <= 80; 
+		r_exposure_level <= 2'd2; //【HX1P35A-移植适配】默认档 2 与上电首次应用值一致。
 	end else begin
 	//	When button pressed, r_button_1 bit is 1. 
 		r_button_0 <= ~I_btn; 
 		r_button_1 <= r_button_0; 
 	
-		if(r_button_1[0]) begin
+		if (I_exposure_step) begin //【HX1P35A-移植适配】每次 KEY3 有效按下只切换一次，避免按住时连续跳档。
+			r_exposure_level <= r_exposure_level + 1'b1; //【HX1P35A-移植适配】四档循环。
+			case (r_exposure_level) //【HX1P35A-移植适配】case 使用当前档位，写入下一档参数。
+				2'd0: begin r_ae_set <= 16'd1200; r_ag_set <= 16'd48;  end //【HX1P35A-移植适配】切换到 EXP:1，中亮、约 2x 增益。
+				2'd1: begin r_ae_set <= 16'd1990; r_ag_set <= 16'd80;  end //【HX1P35A-移植适配】切换到 EXP:2，默认、约 4x 增益。
+				2'd2: begin r_ae_set <= 16'd1990; r_ag_set <= 16'd144; end //【HX1P35A-移植适配】切换到 EXP:3，暗光、约 16x 增益。
+				default: begin r_ae_set <= 16'd600; r_ag_set <= 16'd16; end //【HX1P35A-移植适配】切换回 EXP:0，低亮、约 1x 增益。
+			endcase
+		end else if(r_button_1[0]) begin
 			r_ae_set <= (r_ae_set > 2) ? r_ae_set - r_ae_tick : r_ae_set; 
 		end else if(r_button_1[1]) begin
 			r_ae_set <= (r_ae_set < 1990) ? r_ae_set + r_ae_tick : r_ae_set; 
