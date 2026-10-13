@@ -40,12 +40,14 @@ module hx_vision_pipeline #(
     wire sobel_valid = I_de && (pix_x >= 11'd2) && (pix_y >= 11'd2);
     wire edge_pixel = sobel_valid && (sobel_mag >= SOBEL_THRESHOLD);
 
-    //【HX1P35A-移植适配】使用 9 位比较防止“颜色分量 + 裕量”发生 8 位溢出。
-    wire red_hit = (I_rgb[23:16] > 8'd150) && ({1'b0,I_rgb[23:16]} > ({1'b0,I_rgb[15:8]} + 9'd45)) && ({1'b0,I_rgb[23:16]} > ({1'b0,I_rgb[7:0]} + 9'd45));
-    wire green_hit = (I_rgb[15:8] > 8'd150) && ({1'b0,I_rgb[15:8]} > ({1'b0,I_rgb[23:16]} + 9'd45)) && ({1'b0,I_rgb[15:8]} > ({1'b0,I_rgb[7:0]} + 9'd45));
-    wire blue_hit = (I_rgb[7:0] > 8'd150) && ({1'b0,I_rgb[7:0]} > ({1'b0,I_rgb[23:16]} + 9'd45)) && ({1'b0,I_rgb[7:0]} > ({1'b0,I_rgb[15:8]} + 9'd45));
+    //【HX1P35A-移植适配】暗光下采用较低亮度门限和 9 位通道差比较，兼顾实拍颜色与抗噪声能力。
+    wire red_hit = (I_rgb[23:16] > 8'd80) && ({1'b0,I_rgb[23:16]} > ({1'b0,I_rgb[15:8]} + 9'd24)) && ({1'b0,I_rgb[23:16]} > ({1'b0,I_rgb[7:0]} + 9'd24)); //【HX1P35A-移植适配】放宽红色检测。
+    wire green_hit = (I_rgb[15:8] > 8'd80) && ({1'b0,I_rgb[15:8]} > ({1'b0,I_rgb[23:16]} + 9'd24)) && ({1'b0,I_rgb[15:8]} > ({1'b0,I_rgb[7:0]} + 9'd24)); //【HX1P35A-移植适配】放宽绿色检测。
+    wire blue_hit = (I_rgb[7:0] > 8'd80) && ({1'b0,I_rgb[7:0]} > ({1'b0,I_rgb[23:16]} + 9'd24)) && ({1'b0,I_rgb[7:0]} > ({1'b0,I_rgb[15:8]} + 9'd24)); //【HX1P35A-移植适配】放宽蓝色检测。
     wire target_hit = I_de && (red_hit || green_hit || blue_hit);
     wire [23:0] target_mask_rgb = red_hit ? 24'hff0000 : green_hit ? 24'h00ff00 : blue_hit ? 24'h0000ff : 24'h000000;
+    wire [23:0] dim_rgb = {1'b0,I_rgb[23:17],1'b0,I_rgb[15:9],1'b0,I_rgb[7:1]}; //【HX1P35A-移植适配】保留半亮原图作为 COLOR 背景。
+    wire [23:0] color_overlay_rgb = target_hit ? target_mask_rgb : dim_rgb; //【HX1P35A-移植适配】目标高亮，未命中区域仍可观察。
 
     //【HX1P35A-移植适配】逐帧统计目标总面积、各颜色面积和外接矩形。
     reg [10:0] cur_xmin, cur_xmax, cur_ymin, cur_ymax;
@@ -213,7 +215,7 @@ module hx_vision_pipeline #(
     always @(*) begin
         case(I_mode)
             2'd1: base_rgb = {gray,gray,gray};
-            2'd2: base_rgb = target_mask_rgb;
+            2'd2: base_rgb = color_overlay_rgb; //【HX1P35A-移植适配】COLOR 不再因未命中目标而整屏全黑。
             2'd3: base_rgb = edge_pixel ? 24'hffffff : 24'h000000;
             default: base_rgb = I_rgb;
         endcase

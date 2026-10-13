@@ -33,14 +33,8 @@ wire         m_aixs_tvalid;  //synthesis keep
   wire         awb_O_tvalid_128;  //synthesis keep 
   wire [127:0] awb_O_tdata_128;  //synthesis keep 
 
-    wire         edge_O_tlast;  //synthesis keep
-    wire         edge_O_tuser;  //synthesis keep
-    wire [ 95:0] edge_O_tdata;  //synthesis keep
-    wire         edge_O_tvalid;  //synthesis keep
-    wire         edge_O_tready;  //synthesis keep
-
-    assign awb_O_tready = edge_O_tready;
-    assign edge_O_tready = O_tready;
+    //【HX1P35A-移植适配】公共帧缓存必须保存 AWB 后的真实 RGB，不能在这里提前变成 Sobel 黑白图。
+    assign awb_O_tready = O_tready; //【HX1P35A-移植适配】下游就绪信号直接反馈给彩色 ISP 输出。
   assign O_tdata  = awb_O_tdata_128;
   assign O_tlast  = awb_O_tlast    ;
   assign O_tuser  = awb_O_tuser_128    ;
@@ -99,32 +93,14 @@ awb #(
     .O_tready(awb_O_tready)
 );
 
-edge_detect_96 #(
-    .IMG_WIDTH (1280),
-    .IMG_HEIGHT(720),
-    .EDGE_TH   (11'd80)
-) u_edge_detect_96 (
-    .I_clk   (axi4s_video_aclk),
-    .I_rst_n (I_rst_n),
-    .I_tlast (awb_O_tlast),
-    .I_tuser (awb_O_tuser),
-    .I_tdata (awb_O_tdata),
-    .I_tvalid(awb_O_tvalid),
-    .I_tready(awb_O_tready),
-    .O_tlast (edge_O_tlast),
-    .O_tuser (edge_O_tuser),
-    .O_tdata (edge_O_tdata),
-    .O_tvalid(edge_O_tvalid),
-    .O_tready(edge_O_tready)
-);
-
+//【HX1P35A-移植适配】前置 edge_detect_96 已旁路；Sobel 只在可切换的 HDMI 视觉流水线内执行。
     data_96bit_to_128bit u_data_96bit_to_128bit(
         .I_clk              ( axi4s_video_aclk  ),
         .I_rst_n            ( I_rst_n           ),
 	
-        .I_96b_frame_start  ( edge_O_tuser	    ),
-        .I_96b_valid        ( edge_O_tvalid 		),
-        .I_96b_data         ( edge_O_tdata		),
+        .I_96b_frame_start  ( awb_O_tuser	    ), //【HX1P35A-移植适配】写入 AWB 后彩色帧。
+        .I_96b_valid        ( awb_O_tvalid 		), //【HX1P35A-移植适配】保持彩色像素有效信号。
+        .I_96b_data         ( awb_O_tdata		), //【HX1P35A-移植适配】不再把黑白边缘图写入 DDR。
 	
         .O_128b_frame_start ( awb_O_tuser_128  	),
         .O_128b_valid       ( awb_O_tvalid_128 	),

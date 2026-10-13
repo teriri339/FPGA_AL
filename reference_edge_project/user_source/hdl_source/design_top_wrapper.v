@@ -86,7 +86,6 @@ module design_top_wrapper (
 	wire 			S_raw_tvalid;
 	wire 			S_raw_tuser ;
 	
-	wire			S_ISP_O_tready;
 	wire [127:0]	S_ISP_O_tdata ;
 	wire 			S_ISP_O_tlast ;
 	wire 			S_ISP_O_tuser ;
@@ -655,7 +654,7 @@ isp_top u_isp_top (
 .I_tdata         (S_raw_tdata	),
 .I_tvalid        (S_raw_tvalid	),
 .I_tdest         (),
-.O_tready        (S_ISP_O_tready),
+.O_tready        (1'b1), //【HX1P35A-移植适配】视频帧缓存持续接收，修复原未驱动 ready 信号。
 .O_tdata         (S_ISP_O_tdata ),
 .O_tlast         (S_ISP_O_tlast ),
 .O_tuser         (S_ISP_O_tuser ),
