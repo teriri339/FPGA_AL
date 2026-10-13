@@ -101,6 +101,7 @@ always @(posedge I_clk or posedge I_rst) begin
 reg 	[15:0] 	r_ae ; 
 reg 	[15:0] 	r_ag ; 
 reg 			r_ae_req = 0; //synthesis keep
+reg             r_ae_applied = 0; //【HX1P35A-移植适配】保证 SC520 初始化完成后至少下发一次曝光/增益。
 assign O_ae = r_ae;
 assign O_ag = r_ag;
 assign O_ae_req = r_ae_req;
@@ -110,12 +111,14 @@ always @(posedge I_clk or posedge I_rst) begin
 		r_ae_req <= 0; 
 		r_ae     <= 1990; 
 		r_ag     <= 80; 
+		r_ae_applied <= 0; //【HX1P35A-移植适配】传感器复位后重新应用 4x 默认增益。
 	end else if(r_ae_req) begin
 		r_ae_req <= 0; 
-	end else if(((r_ae != r_ae_set) || (r_ag != r_ag_set))&&(I_cam_cfg_done==1'b1)&&(I_ae_cfg_done==1'b1)) begin
+	end else if((!r_ae_applied || (r_ae != r_ae_set) || (r_ag != r_ag_set))&&(I_cam_cfg_done==1'b1)&&(I_ae_cfg_done==1'b1)) begin //【HX1P35A-移植适配】修复初值相同导致首次增益从未写入。
 		r_ae     <= r_ae_set; 
 		r_ag     <= r_ag_set; 
 		r_ae_req <= 1; 
+		r_ae_applied <= 1; //【HX1P35A-移植适配】首次写入完成请求已发出。
 	end
 end
 
