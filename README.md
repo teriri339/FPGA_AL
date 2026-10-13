@@ -2,7 +2,7 @@
 
 这是将原 Kintex-7/Vivado 工程按功能重新组织的安路 PH1P35A（Tang Dynasty）迁移目录。它不包含或复用任何 Xilinx `.xci`、Block Design、MicroBlaze、MIG、ILA、GT 或约束文件。
 
-目录内的 `reference_edge_project/` 是完整的安路官方边缘检测工程基线（PH1P35MDG324，约 88 MiB / 93 个 Verilog 文件），包括 MIPI D-PHY RX、SC500 摄像头配置、RAW10 解包、ISP、DDR、HDMI、PLL、FIFO、安路工程文件与 pin/SDC 约束。它是实际可由 Tang Dynasty 打开的工程：`reference_edge_project/td_project/camera_to_dsi_display.al`。
+目录内的 `reference_edge_project/` 是完整的安路官方边缘检测工程基线（PH1P35MDG324），包括 MIPI D-PHY RX、SC520 摄像头配置、RAW10 解包、ISP、DDR、HDMI、PLL、FIFO、安路工程文件与 pin/SDC 约束。当前摄像头工作模式为 1280×720@60、RAW10、2 Lane、828 Mbps/Lane。Tang Dynasty 工程入口为：`reference_edge_project/td_project/camera_to_dsi_display.al`。
 
 ## 已实现的迁移范围
 

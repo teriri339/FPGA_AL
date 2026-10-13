@@ -47,6 +47,14 @@ module design_top_wrapper (
 		
 	wire        	S_pll_lock;
     wire        	S_rst_n;
+	reg  [17:0] 	S_cam_power_cnt; //【HX1P35A-移植适配】SC520 上电延时计数器。
+	reg         	S_cam_pwdnb; //【HX1P35A-移植适配】SC520 PWDNB/XSHUTDN 控制。
+	reg         	S_cam_i2c_ready; //【HX1P35A-移植适配】SC520 上电稳定后再启动 I2C。
+	(* keep = "true" *) wire [15:0] S_cam_sensor_id; //【HX1P35A-移植适配】保留 SC520 芯片 ID 供在线调试。
+	(* keep = "true" *) wire        S_cam_sensor_id_ok; //【HX1P35A-移植适配】SC520 芯片 ID 校验状态。
+	(* keep = "true" *) wire        S_cam_i2c_error; //【HX1P35A-移植适配】SC520 I2C 总线错误状态。
+	localparam integer CAM_PWDNB_LOW_CYCLES = 23810; //【HX1P35A-移植适配】23.809524 MHz 下保持低电平至少 1 ms。
+	localparam integer CAM_I2C_START_CYCLES = 142857; //【HX1P35A-移植适配】释放后再等待至少 5 ms。
 	
 	wire [15:0] 	S_ae;
     wire [15:0] 	S_ag;
@@ -437,7 +445,23 @@ module design_top_wrapper (
         S_vi_ddr_wr_en
     };
 	
-	assign O_cam_rst 	= 1'b1;
+	//【HX1P35A-移植适配】SC520 上电后先保持 PWDNB/XSHUTDN 为低，再释放并等待内部上电完成。
+	always @(posedge S_24m_clk or negedge S_pll_lock) begin //【HX1P35A-移植适配】
+		if (!S_pll_lock) begin //【HX1P35A-移植适配】
+			S_cam_power_cnt <= 18'd0; //【HX1P35A-移植适配】
+			S_cam_pwdnb <= 1'b0; //【HX1P35A-移植适配】
+			S_cam_i2c_ready <= 1'b0; //【HX1P35A-移植适配】
+		end else begin //【HX1P35A-移植适配】
+			if (S_cam_power_cnt < CAM_I2C_START_CYCLES) //【HX1P35A-移植适配】
+				S_cam_power_cnt <= S_cam_power_cnt + 1'b1; //【HX1P35A-移植适配】
+			if (S_cam_power_cnt >= CAM_PWDNB_LOW_CYCLES) //【HX1P35A-移植适配】
+				S_cam_pwdnb <= 1'b1; //【HX1P35A-移植适配】
+			if (S_cam_power_cnt >= CAM_I2C_START_CYCLES - 1) //【HX1P35A-移植适配】
+				S_cam_i2c_ready <= 1'b1; //【HX1P35A-移植适配】
+		end //【HX1P35A-移植适配】
+	end //【HX1P35A-移植适配】
+
+	assign O_cam_rst 	= S_cam_pwdnb; //【HX1P35A-移植适配】驱动 SC520 PWDNB/XSHUTDN。
     assign O_cam_24m 	= S_24m_clk;
 	
 	
@@ -472,24 +496,28 @@ module design_top_wrapper (
       .O_ag(S_ag)
   );
   
-    // SC500CS factory HD mode: 1280x720@60, RAW10, 2-Lane, 480 Mbps/Lane.
-    uicfgcs500_720p #(
-      .CLK_DIV(24000000 / 100000 - 1)
-  ) u_uicfgcs500 (
+    //【HX1P35A-移植适配】SC520CS 原厂 HD 模式：1280x720@60、RAW10、2-Lane、828 Mbps/Lane。
+    //【HX1P35A-移植适配】寄存器表关闭 Slave/FSIN 等待，Sensor 以 free-run 方式连续输出。
+    uicfgcs520 #( //【HX1P35A-移植适配】替换原 SC500 配置模块。
+      .CLK_DIV(23809524 / 100000 - 1) //【HX1P35A-移植适配】100 kHz I2C。
+  ) u_uicfgcs520 ( //【HX1P35A-移植适配】
       .I_clk(S_24m_clk),  //系统时钟输入
-      .I_rst_n(S_rst_n),  //系统复位输入
+      .I_rst_n(S_cam_i2c_ready), //【HX1P35A-移植适配】等待 SC520 上电稳定后初始化。
       .I_ae_req(S_ae_req),
       .I_ae(S_ae),
       .I_ag(S_ag),
       .O_cam_scl(O_cam_scl),  //I2C总线，SCL时钟
       .IO_cam_sda(IO_cam_sda),  //I2C总线，SDA数据
       .O_cfg_done(S_cam_cfg_done),  //摄像头寄存器初始化完成
-      .O_ae_cfg_done(S_ae_cfg_done)  //AE配置完成
+      .O_ae_cfg_done(S_ae_cfg_done),  //AE配置完成 //【HX1P35A-移植适配】
+      .O_sensor_id(S_cam_sensor_id), //【HX1P35A-移植适配】
+      .O_sensor_id_ok(S_cam_sensor_id_ok), //【HX1P35A-移植适配】
+      .O_iic_error(S_cam_i2c_error) //【HX1P35A-移植适配】
   );
 	
     mipi_dphy_rx_ph1p_mipiio_wrapper#(
         .DPHY_RX_LOCATION      ( "DPHY0" ),
-        .HS_EQUALIZER          ( "0dB"   ),//"0dB","1.5dB","3dB","4.5dB","6dB","7.5dB","9dB","10.5dB"
+        .HS_EQUALIZER          ( "3dB"   ),//【HX1P35A-移植适配】SC520 828 Mbps/Lane 接收均衡。
         .HS_VGA_GAIN           ( "8dB" ),//"-3dB","-1.5dB","0dB","1.5dB","3dB","4.5dB","6dB","7.5dB"
         .LANE_NUM              ( 2       ),
         .BYTE_NUM              ( 1       )

@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<Project Version="3" Minor="2" Path="C:/Users/Cczzzzzq/Desktop/anlogic_example_SC520CS/lab_ex2_edge_SC500_720P/lab_ex2_edge/td_project">
+<Project Version="3" Minor="2" Path="D:/Downloads/qiansai/FPGA_AL/reference_edge_project/td_project">
     <Project_Created_Time></Project_Created_Time>
     <TD_Encoding>UTF-8</TD_Encoding>
     <TD_Version>6.2.168116</TD_Version>
@@ -172,7 +172,7 @@
                     <Attr Name="CompileOrder" Val="35"/>
                 </FileInfo>
             </File>
-            <File Path="../user_source/hdl_source/uics500_cfg/SC500GainTbl.v">
+            <File Path="../user_source/hdl_source/uics520_cfg/SC520GainTbl.v">
                 <FileInfo>
                     <Attr Name="UsedInSyn" Val="true"/>
                     <Attr Name="UsedInP&R" Val="true"/>
@@ -180,7 +180,7 @@
                     <Attr Name="CompileOrder" Val="36"/>
                 </FileInfo>
             </File>
-            <File Path="../user_source/hdl_source/uics500_cfg/uicfgcs500_720p.v">
+            <File Path="../user_source/hdl_source/uics520_cfg/uicfgcs520.v">
                 <FileInfo>
                     <Attr Name="UsedInSyn" Val="true"/>
                     <Attr Name="UsedInP&R" Val="true"/>
@@ -188,7 +188,7 @@
                     <Attr Name="CompileOrder" Val="37"/>
                 </FileInfo>
             </File>
-            <File Path="../user_source/hdl_source/uics500_cfg/uics500reg_720p60.v">
+            <File Path="../user_source/hdl_source/uics520_cfg/uics520reg_720p60.v">
                 <FileInfo>
                     <Attr Name="UsedInSyn" Val="true"/>
                     <Attr Name="UsedInP&R" Val="true"/>
@@ -196,7 +196,7 @@
                     <Attr Name="CompileOrder" Val="38"/>
                 </FileInfo>
             </File>
-            <File Path="../user_source/hdl_source/uics500_cfg/uics500regAE.v">
+            <File Path="../user_source/hdl_source/uics520_cfg/uics520regAE.v">
                 <FileInfo>
                     <Attr Name="UsedInSyn" Val="true"/>
                     <Attr Name="UsedInP&R" Val="true"/>
