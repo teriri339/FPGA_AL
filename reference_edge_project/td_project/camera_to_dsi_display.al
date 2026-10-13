@@ -324,6 +324,58 @@
                      <Attr Name="CompileOrder" Val="54"/>
                  </FileInfo>
              </File>
+             <File Path="../user_source/hdl_source/legacy_port/rgb_analyze.v">
+                 <FileInfo>
+                     <Attr Name="UsedInSyn" Val="true"/>
+                     <Attr Name="UsedInP&amp;R" Val="true"/>
+                     <Attr Name="BelongTo" Val="design_1"/>
+                     <Attr Name="CompileOrder" Val="55"/>
+                 </FileInfo>
+             </File>
+             <File Path="../user_source/hdl_source/legacy_port/video_data_sw.v">
+                 <FileInfo>
+                     <Attr Name="UsedInSyn" Val="true"/>
+                     <Attr Name="UsedInP&amp;R" Val="true"/>
+                     <Attr Name="BelongTo" Val="design_1"/>
+                     <Attr Name="CompileOrder" Val="56"/>
+                 </FileInfo>
+             </File>
+             <File Path="../user_source/hdl_source/legacy_port/rtl/a2b.v">
+                 <FileInfo><Attr Name="UsedInSyn" Val="true"/><Attr Name="UsedInP&amp;R" Val="true"/><Attr Name="BelongTo" Val="design_1"/><Attr Name="CompileOrder" Val="57"/></FileInfo>
+             </File>
+             <File Path="../user_source/hdl_source/legacy_port/rtl/debounce.v">
+                 <FileInfo><Attr Name="UsedInSyn" Val="true"/><Attr Name="UsedInP&amp;R" Val="true"/><Attr Name="BelongTo" Val="design_1"/><Attr Name="CompileOrder" Val="58"/></FileInfo>
+             </File>
+             <File Path="../user_source/hdl_source/legacy_port/rtl/delay_rdy.v">
+                 <FileInfo><Attr Name="UsedInSyn" Val="true"/><Attr Name="UsedInP&amp;R" Val="true"/><Attr Name="BelongTo" Val="design_1"/><Attr Name="CompileOrder" Val="59"/></FileInfo>
+             </File>
+             <File Path="../user_source/hdl_source/legacy_port/rtl/flash_max.v">
+                 <FileInfo><Attr Name="UsedInSyn" Val="true"/><Attr Name="UsedInP&amp;R" Val="true"/><Attr Name="BelongTo" Val="design_1"/><Attr Name="CompileOrder" Val="60"/></FileInfo>
+             </File>
+             <File Path="../user_source/hdl_source/legacy_port/rtl/freq_test_value.v">
+                 <FileInfo><Attr Name="UsedInSyn" Val="true"/><Attr Name="UsedInP&amp;R" Val="true"/><Attr Name="BelongTo" Val="design_1"/><Attr Name="CompileOrder" Val="61"/></FileInfo>
+             </File>
+             <File Path="../user_source/hdl_source/legacy_port/rtl/hs_gen.v">
+                 <FileInfo><Attr Name="UsedInSyn" Val="true"/><Attr Name="UsedInP&amp;R" Val="true"/><Attr Name="BelongTo" Val="design_1"/><Attr Name="CompileOrder" Val="62"/></FileInfo>
+             </File>
+             <File Path="../user_source/hdl_source/legacy_port/rtl/lvds_data.v">
+                 <FileInfo><Attr Name="UsedInSyn" Val="true"/><Attr Name="UsedInP&amp;R" Val="true"/><Attr Name="BelongTo" Val="design_1"/><Attr Name="CompileOrder" Val="63"/></FileInfo>
+             </File>
+             <File Path="../user_source/hdl_source/legacy_port/rtl/muxvs.v">
+                 <FileInfo><Attr Name="UsedInSyn" Val="true"/><Attr Name="UsedInP&amp;R" Val="true"/><Attr Name="BelongTo" Val="design_1"/><Attr Name="CompileOrder" Val="64"/></FileInfo>
+             </File>
+             <File Path="../user_source/hdl_source/legacy_port/rtl/para.v">
+                 <FileInfo><Attr Name="UsedInSyn" Val="true"/><Attr Name="UsedInP&amp;R" Val="true"/><Attr Name="BelongTo" Val="design_1"/><Attr Name="CompileOrder" Val="65"/></FileInfo>
+             </File>
+             <File Path="../user_source/hdl_source/legacy_port/rtl/portadd.v">
+                 <FileInfo><Attr Name="UsedInSyn" Val="true"/><Attr Name="UsedInP&amp;R" Val="true"/><Attr Name="BelongTo" Val="design_1"/><Attr Name="CompileOrder" Val="66"/></FileInfo>
+             </File>
+             <File Path="../user_source/hdl_source/legacy_port/rtl/vs_gen.v">
+                 <FileInfo><Attr Name="UsedInSyn" Val="true"/><Attr Name="UsedInP&amp;R" Val="true"/><Attr Name="BelongTo" Val="design_1"/><Attr Name="CompileOrder" Val="67"/></FileInfo>
+             </File>
+             <File Path="../user_source/hdl_source/legacy_port/rtl/yuv_rgb.v">
+                 <FileInfo><Attr Name="UsedInSyn" Val="true"/><Attr Name="UsedInP&amp;R" Val="true"/><Attr Name="BelongTo" Val="design_1"/><Attr Name="CompileOrder" Val="68"/></FileInfo>
+             </File>
          </Verilog>
         <System_Verilog>
             <File Path="../user_source/hdl_source/mipi_dphy_rx/mipi_dphy_rx_ph1p_mipiio_wrapper.sv">
