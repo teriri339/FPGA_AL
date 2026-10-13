@@ -8,7 +8,8 @@ module hx_button_mode_ctrl #(
     input wire [1:0] I_button_n,
     output reg [1:0] O_mode,
     output reg O_alarm_enable,
-    output reg [1:0] O_exposure_level //【HX1P35A-移植适配】KEY3 短按循环选择四档曝光亮度。
+    output reg [1:0] O_exposure_level, //【HX1P35A-移植适配】KEY3 手动曝光档位。
+    output reg O_auto_exposure //【HX1P35A-移植适配】上电默认启用自动曝光。
 );
     reg [1:0] sync_ff1, sync_ff2, stable_state;
     reg [19:0] count0, count1;
@@ -19,7 +20,8 @@ module hx_button_mode_ctrl #(
         if (!I_rst_n) begin
             sync_ff1 <= 2'b11; sync_ff2 <= 2'b11; stable_state <= 2'b11;
             count0 <= 0; count1 <= 0; O_mode <= 0; O_alarm_enable <= 1'b1;
-            O_exposure_level <= 2'd2; //【HX1P35A-移植适配】上电默认曝光档 2：1990 half-lines、约 4x 增益；蜂鸣器由 SW5 控制。
+            O_exposure_level <= 2'd2; //【HX1P35A-移植适配】退出自动曝光前的初始手动档位。
+            O_auto_exposure <= 1'b1; //【HX1P35A-移植适配】上电直接根据画面亮度闭环调节。
         end else begin
             sync_ff1 <= I_button_n;
             sync_ff2 <= sync_ff1;
@@ -30,7 +32,16 @@ module hx_button_mode_ctrl #(
             else if (count1 == DEBOUNCE_CYCLES-1) begin stable_state[1] <= sync_ff2[1]; count1 <= 0; end
             else count1 <= count1 + 1'b1;
             if (press0) O_mode <= O_mode + 1'b1;
-            if (press1) O_exposure_level <= O_exposure_level + 1'b1; //【HX1P35A-移植适配】KEY3 专用于四档曝光循环；蜂鸣器由 SW5 硬件开关控制。
+            if (press1) begin //【HX1P35A-移植适配】KEY3 循环 AUTO、EXP0、EXP1、EXP2、EXP3。
+                if (O_auto_exposure) begin
+                    O_auto_exposure <= 1'b0; //【HX1P35A-移植适配】AUTO 后进入最低手动曝光档。
+                    O_exposure_level <= 2'd0; //【HX1P35A-移植适配】手动 EXP0。
+                end else if (O_exposure_level == 2'd3) begin
+                    O_auto_exposure <= 1'b1; //【HX1P35A-移植适配】EXP3 后返回自动曝光。
+                end else begin
+                    O_exposure_level <= O_exposure_level + 1'b1; //【HX1P35A-移植适配】手动曝光逐档增加。
+                end
+            end
         end
     end
 endmodule

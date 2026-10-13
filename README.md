@@ -44,7 +44,7 @@
 ## 本地检查记录（2026-10-08）
 
 * 已复制的 `reference_edge_project` 含 93 个 Verilog 文件与完整 Tang Dynasty 项目文件；已有实现产物为 `td_project/camera_to_dsi_display_Runs/phy_1/camera_to_dsi_display.bit`。
-* 2026-10-14 已使用本机安路 TD 6.2.168116 完成综合、布局布线和位流生成；最终 setup WNS `0.401 ns`、hold WNS `0.020 ns`、0 个违规端点。
+* 2026-10-14 已使用本机安路 TD 6.2.168116 完成综合、布局布线和位流生成；自动曝光版本最终 setup WNS `0.323 ns`、hold WNS `0.020 ns`、0 个违规端点。
 * SC520、视觉处理源码、管脚与时序约束均已加入 `.al` 工程；最新标准位流位于 `td_project/camera_to_dsi_display_Runs/phy_1/camera_to_dsi_display.bit`，仍需烧录后进行摄像头实拍确认。
 # 当前已接入的可运行功能
 
@@ -52,11 +52,12 @@
 
 - 按键循环选择原图、灰度、彩色目标高亮、真正的 3×3 Sobel 边缘图；
 - 适配暗光的红／绿／蓝目标像素面积统计和上一帧包围框；COLOR 模式保留半亮原图作为背景；
+- 全画面亮度抽样闭环自动曝光：过暗时先增加曝光时间、到上限后增加增益，过亮时反向调整，并设置亮度死区和 16 帧调节间隔以减少闪烁；
 - HDMI 画面目标框与状态条 OSD；
 - 目标首次出现时驱动板载低有效蜂鸣器 `C12` 短鸣约 200 ms；
 - 保留并接入从旧工程剥离的 RGB↔YUV 定点转换公式。
 
-新增 RTL 位于 `reference_edge_project/user_source/hdl_source/hx1p35_port/`。板载 KEY2（A9）已加入同步与约 10 ms 消抖，每按一次按 `原图 → 灰度 → 彩色目标高亮 → Sobel` 循环；板载 KEY3（B9）每按一次循环 `EXP:0～3` 四档曝光；板载 KEY1（D5）用作低有效系统复位。当前曝光档会显示在 HDMI 左上角，默认 `EXP:2`（曝光 1990、约 4x 增益），`EXP:3` 用于暗光。蜂鸣器使用 C12，是否发声由板载 SW5 控制。原参考约束占用的以太网 TX_EN/R10 和 TXD0/R11 已释放。这些功能均不依赖 Xilinx IP；必须在安路 TD 中打开 `td_project/camera_to_dsi_display.al` 后，以该工程的 IP 和约束完成综合、布局布线与下载验证。
+新增 RTL 位于 `reference_edge_project/user_source/hdl_source/hx1p35_port/`。板载 KEY2（A9）已加入同步与约 10 ms 消抖，每按一次按 `原图 → 灰度 → 彩色目标高亮 → Sobel` 循环；板载 KEY3（B9）每按一次按 `AUTO → EXP:0 → EXP:1 → EXP:2 → EXP:3 → AUTO` 循环；板载 KEY1（D5）用作低有效系统复位。上电默认自动曝光，HDMI 左上角显示 `EXP:A`；手动档中 `EXP:3` 用于暗光。蜂鸣器使用 C12，是否发声由板载 SW5 控制。原参考约束占用的以太网 TX_EN/R10 和 TXD0/R11 已释放。这些功能均不依赖 Xilinx IP；必须在安路 TD 中打开 `td_project/camera_to_dsi_display.al` 后，以该工程的 IP 和约束完成综合、布局布线与下载验证。
 
 ## 历史文档
 

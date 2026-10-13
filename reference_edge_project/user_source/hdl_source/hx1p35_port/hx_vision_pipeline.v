@@ -10,9 +10,12 @@ module hx_vision_pipeline #(
     input wire I_user, input wire I_last, input wire [23:0] I_rgb,
     input wire [1:0] I_mode,
     input wire [1:0] I_exposure_level, //【HX1P35A-移植适配】在 HDMI OSD 中显示当前曝光档位。
+    input wire I_auto_exposure, //【HX1P35A-移植适配】OSD 显示 AUTO 状态。
     output reg O_vsync, output reg O_hsync, output reg O_de,
     output reg O_user, output reg O_last, output reg [23:0] O_rgb,
-    output reg O_target_found, output reg [23:0] O_target_pixels
+    output reg O_target_found, output reg [23:0] O_target_pixels,
+    output reg [7:0] O_frame_luma, //【HX1P35A-移植适配】整帧稀疏采样平均亮度，供自动曝光使用。
+    output reg O_frame_luma_toggle //【HX1P35A-移植适配】每完成一帧翻转，用于跨时钟域传递亮度。
 );
     //【HX1P35A-移植适配】坐标使用 VTC 的 user/last 标志；frame_start 当前像素固定为 (0,0)。
     reg [10:0] x, y;
@@ -23,6 +26,10 @@ module hx_vision_pipeline #(
     //【HX1P35A-移植适配】BT.601 灰度近似，最大值 65280，不发生 16 位溢出。
     wire [15:0] gray_sum = I_rgb[23:16] * 8'd77 + I_rgb[15:8] * 8'd150 + I_rgb[7:0] * 8'd29;
     wire [7:0] gray = gray_sum[15:8];
+
+    //【HX1P35A-移植适配】每 16 行、每 16 像素取样一次；3600 个样点除以 4096 得到 0~224 的稳定亮度量。
+    wire luma_sample = I_de && (pix_x[3:0] == 4'd0) && (pix_y[3:0] == 4'd0); //【HX1P35A-移植适配】覆盖整幅画面而非局部亮点。
+    reg [19:0] frame_luma_sum; //【HX1P35A-移植适配】最大 3600*255，小于 20 位上限。
 
     //【HX1P35A-移植适配】两行缓存构成真正的 3x3 Sobel 窗口；边界两行/两列强制为黑色。
     reg [7:0] gray_line1 [0:IMAGE_WIDTH-1];
@@ -172,7 +179,7 @@ module hx_vision_pipeline #(
             osd_fg = 24'h40e0ff;
             case (osd_col)
                 0:osd_char="M"; 1:osd_char="O"; 2:osd_char="D"; 3:osd_char="E"; 4:osd_char=":";
-                14:osd_char="E"; 15:osd_char="X"; 16:osd_char="P"; 17:osd_char=":"; 18:osd_char=bcd_ascii({2'b00,I_exposure_level}); //【HX1P35A-移植适配】曝光档位提示。
+                14:osd_char="E"; 15:osd_char="X"; 16:osd_char="P"; 17:osd_char=":"; 18:osd_char=I_auto_exposure ? "A" : bcd_ascii({2'b00,I_exposure_level}); //【HX1P35A-移植适配】自动曝光显示 EXP:A。
                 default: begin
                     case (I_mode)
                         2'd0: case(osd_col) 6:osd_char="R";7:osd_char="A";8:osd_char="W";default:osd_char=" ";endcase
@@ -237,6 +244,7 @@ module hx_vision_pipeline #(
             box_xmin <= 0; box_ymin <= 0; box_xmax <= 0; box_ymax <= 0; box_color <= 0;
             center_x_bcd <= 0; center_y_bcd <= 0; pixel_count_bcd <= 0;
             O_target_found <= 0; O_target_pixels <= 0;
+            frame_luma_sum <= 0; O_frame_luma <= 0; O_frame_luma_toggle <= 0; //【HX1P35A-移植适配】复位自动曝光亮度统计。
             stage_vsync <= 0; stage_hsync <= 0; stage_de <= 0; stage_user <= 0; stage_last <= 0;
             stage_rgb <= 0; draw_x <= 0; draw_y <= 0;
             O_vsync <= 0; O_hsync <= 0; O_de <= 0; O_user <= 0; O_last <= 0; O_rgb <= 0;
@@ -249,6 +257,14 @@ module hx_vision_pipeline #(
             O_vsync <= stage_vsync; O_hsync <= stage_hsync; O_de <= stage_de;
             O_user <= stage_user; O_last <= stage_last;
             O_rgb <= stage_de ? overlay_rgb : 24'h000000;
+
+            if (frame_start) begin //【HX1P35A-移植适配】帧首发布上一帧亮度，并从当前首像素重新累计。
+                O_frame_luma <= frame_luma_sum[19:12]; //【HX1P35A-移植适配】用移位代替除法器，降低逻辑和时序开销。
+                O_frame_luma_toggle <= ~O_frame_luma_toggle; //【HX1P35A-移植适配】跨域接收端据此识别新一帧统计值。
+                frame_luma_sum <= {12'd0,gray}; //【HX1P35A-移植适配】当前 (0,0) 像素作为新一帧第一个样点。
+            end else if (luma_sample) begin
+                frame_luma_sum <= frame_luma_sum + gray; //【HX1P35A-移植适配】全画面稀疏亮度累加。
+            end
 
             if (I_de && (pix_x < IMAGE_WIDTH)) begin
                 gray_line2[pix_x] <= gray_line1[pix_x];

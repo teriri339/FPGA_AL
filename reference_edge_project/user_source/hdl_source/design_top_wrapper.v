@@ -170,8 +170,10 @@ module design_top_wrapper (
     wire        S_target_found;
     wire[23:0]  S_target_pixels;
     wire[1:0]   S_vision_mode;
-    wire[1:0]   S_exposure_level; //【HX1P35A-移植适配】KEY3 短按选择的曝光档位（HDMI 像素时钟域）。
-    wire        S_exposure_step; //【HX1P35A-移植适配】KEY3 在 24 MHz 摄像头配置域内的消抖单脉冲。
+    wire[1:0]   S_exposure_level; //【HX1P35A-移植适配】KEY3 选择的手动曝光档位（HDMI 像素时钟域）。
+    wire        S_auto_exposure; //【HX1P35A-移植适配】自动曝光模式，上电默认开启。
+    wire[7:0]   S_frame_luma; //【HX1P35A-移植适配】视频帧全局平均亮度。
+    wire        S_frame_luma_toggle; //【HX1P35A-移植适配】视频帧亮度更新翻转标志。
     wire        S_alarm_enable; //【HX1P35A-移植适配】目标告警逻辑保持使能，蜂鸣器声音由板载 SW5 硬件开关控制。
     reg         S_target_found_d; //【HX1P35A-移植适配】检测目标出现沿，避免蜂鸣器持续鸣叫。
     reg [23:0]  S_buzzer_count; //【HX1P35A-移植适配】74.25MHz 像素时钟下约 200ms 蜂鸣计数。
@@ -488,7 +490,10 @@ module design_top_wrapper (
       .I_clk(S_24m_clk),
       .I_rst(~S_rst_n),
       .I_btn(4'b1111), //【HX1P35A-移植适配】实体按键专用于视觉控制，避免切换模式时同时改变摄像头曝光。
-      .I_exposure_step(S_exposure_step), //【HX1P35A-移植适配】KEY3 的单周期四档曝光切换请求。
+      .I_auto_enable(S_auto_exposure), //【HX1P35A-移植适配】自动/手动曝光状态在 ae_set 内同步到 24 MHz 域。
+      .I_manual_exposure_level(S_exposure_level), //【HX1P35A-移植适配】自动关闭时使用 KEY3 选择的固定档位。
+      .I_frame_luma(S_frame_luma), //【HX1P35A-移植适配】来自 HDMI 像素域的帧平均亮度。
+      .I_frame_luma_toggle(S_frame_luma_toggle), //【HX1P35A-移植适配】跨域帧亮度更新标志。
       .I_cam_cfg_done(S_cam_cfg_done),
       .I_ae_cfg_done(S_ae_cfg_done),
       .O_ae_req(S_ae_req),
@@ -553,10 +558,6 @@ module design_top_wrapper (
         .IO_rx_data_pad_p      ( IO_rx_data_pad_p )
     );
 
-    //【HX1P35A-移植适配】KEY3 直接在摄像头配置时钟域同步并消抖，避免曝光控制跨时钟路径。
-    key_remove_shakes u_exposure_key_debounce( //【HX1P35A-移植适配】
-        .I_clk(S_24m_clk), .I_rst_n(S_rst_n), .I_key_in(I_button[1]), .O_key_trig_out(S_exposure_step) //【HX1P35A-移植适配】
-    );
 	
 	
  //  cwc cwc_inst
@@ -718,10 +719,10 @@ isp_top u_isp_top (
         .O_vdieo_data        ( S_video_rd_data      )
     );
 
-    //【HX1P35A-移植适配】KEY2 切换显示模式；KEY3 每次按下循环曝光；蜂鸣器由板载 SW5 控制。
+    //【HX1P35A-移植适配】KEY2 切换显示模式；KEY3 循环 AUTO/四档手动曝光；蜂鸣器由板载 SW5 控制。
     hx_button_mode_ctrl u_hx_button_mode_ctrl(
         .I_clk(S_hdmi_pixel_clk), .I_rst_n(S_hdmi_rst_n), .I_button_n(I_button),
-        .O_mode(S_vision_mode), .O_alarm_enable(S_alarm_enable), .O_exposure_level(S_exposure_level) //【HX1P35A-移植适配】
+        .O_mode(S_vision_mode), .O_alarm_enable(S_alarm_enable), .O_exposure_level(S_exposure_level), .O_auto_exposure(S_auto_exposure) //【HX1P35A-移植适配】
     );
 
     //【HX1P35A-移植适配】不修改 MIPI、DDR 或 HDMI 驱动，仅处理 DDR 读出的 RGB888 像素流。
@@ -737,10 +738,11 @@ isp_top u_isp_top (
     hx_vision_pipeline u_hx_vision_pipeline(
         .I_clk(S_hdmi_pixel_clk), .I_rst_n(S_hdmi_rst_n),
         .I_vsync(S_alg_vsync), .I_hsync(S_alg_hsync), .I_de(S_alg_de),
-        .I_user(S_alg_user), .I_last(S_alg_last), .I_rgb(S_alg_rgb), .I_mode(S_vision_mode), .I_exposure_level(S_exposure_level), //【HX1P35A-移植适配】OSD 显示曝光档位。
+        .I_user(S_alg_user), .I_last(S_alg_last), .I_rgb(S_alg_rgb), .I_mode(S_vision_mode), .I_exposure_level(S_exposure_level), .I_auto_exposure(S_auto_exposure), //【HX1P35A-移植适配】OSD 显示自动或手动曝光状态。
         .O_vsync(S_vision_vsync), .O_hsync(S_vision_hsync), .O_de(S_vision_de),
         .O_user(S_vision_user), .O_last(S_vision_last), .O_rgb(S_vision_rgb),
-        .O_target_found(S_target_found), .O_target_pixels(S_target_pixels)
+        .O_target_found(S_target_found), .O_target_pixels(S_target_pixels),
+        .O_frame_luma(S_frame_luma), .O_frame_luma_toggle(S_frame_luma_toggle) //【HX1P35A-移植适配】闭环自动曝光亮度反馈。
     );
 
 

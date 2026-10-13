@@ -10,6 +10,9 @@ rename_clock -name {HDMI_SERIAL_CLK} [get_clocks {u_PLL/ph1p_phy_pll_wrapper_25a
 
 rename_clock -name {MIPI_RX_BYTE_CLK} [get_clocks {u_mipi_dphy_rx_ph1p_mipiio_wrapper/u_ph1p_mipiio_rx_wrapper/u_PH1P_LOGIC_DPHY_MIPI_RX.o_fabric_div4_8_clk}]
 
+#【HX1P35A-移植适配】自动曝光亮度与模式通过 ae_set 内两级同步器从 HDMI 像素域进入 24 MHz I2C 域。
+set_false_path -from [get_clocks {HDMI_PIXEL_CLK}] -to [get_clocks {pll_clk_24m}]
+
 
 set_clock_groups -asynchronous \
     -group [get_clocks {mipi_rx_ck_pad MIPI_RX_BYTE_CLK}] \
