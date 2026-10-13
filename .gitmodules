@@ -1,0 +1,27 @@
+[submodule "references/01_jpeg/FPGA-JPEG-LS-encoder"]
+	path = references/01_jpeg/FPGA-JPEG-LS-encoder
+	url = https://gitee.com/wangxuan95/FPGA-JPEG-LS-encoder.git
+[submodule "references/01_jpeg/FPGA-QOI"]
+	path = references/01_jpeg/FPGA-QOI
+	url = https://gitee.com/wangxuan95/FPGA-QOI.git
+[submodule "references/01_jpeg/frame-codebase"]
+	path = references/01_jpeg/frame-codebase
+	url = https://github.com/brilliantlabsAR/frame-codebase.git
+[submodule "references/01_jpeg/openeye-CamSI"]
+	path = references/01_jpeg/openeye-CamSI
+	url = https://github.com/chili-chips-ba/openeye-CamSI.git
+[submodule "references/02_camera_pipeline/fpga-camera-pipeline"]
+	path = references/02_camera_pipeline/fpga-camera-pipeline
+	url = https://github.com/RSoleym/fpga-camera-pipeline.git
+[submodule "references/03_preprocess/image-process-on-fpga"]
+	path = references/03_preprocess/image-process-on-fpga
+	url = https://github.com/YenLaurent/image-process-on-fpga.git
+[submodule "references/04_sobel_linebuffer/FPGA_RealTime_and_Static_Sobel_Edge_Detection"]
+	path = references/04_sobel_linebuffer/FPGA_RealTime_and_Static_Sobel_Edge_Detection
+	url = https://github.com/AngeloJacobo/FPGA_RealTime_and_Static_Sobel_Edge_Detection.git
+[submodule "references/04_sobel_linebuffer/fpga-hls-examples"]
+	path = references/04_sobel_linebuffer/fpga-hls-examples
+	url = https://github.com/MicrochipTech/fpga-hls-examples.git
+[submodule "references/05_isp/zynqmp_cam_isp_demo"]
+	path = references/05_isp/zynqmp_cam_isp_demo
+	url = https://gitee.com/zhihuaxie007/zynqmp_cam_isp_demo.git

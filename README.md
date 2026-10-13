@@ -2,6 +2,8 @@
 
 这是将原 Kintex-7/Vivado 工程按功能重新组织的安路 PH1P35A（Tang Dynasty）迁移目录。它不包含或复用任何 Xilinx `.xci`、Block Design、MicroBlaze、MIG、ILA、GT 或约束文件。
 
+当前开发分支为 `WZY`。工程目录导航和分支使用规则见 `docs/PROJECT_STRUCTURE.md`；`main` 仅保留稳定基线，不直接覆盖。
+
 目录内的 `reference_edge_project/` 是完整的安路官方边缘检测工程基线（PH1P35MDG324），包括 MIPI D-PHY RX、SC520 摄像头配置、RAW10 解包、ISP、DDR、HDMI、PLL、FIFO、安路工程文件与 pin/SDC 约束。当前摄像头工作模式为 1280×720@60、RAW10、2 Lane、828 Mbps/Lane。Tang Dynasty 工程入口为：`reference_edge_project/td_project/camera_to_dsi_display.al`。
 
 ## 已实现的迁移范围
@@ -13,15 +15,13 @@
 * `src/osd_overlay.v`：在视频左上角显示模式/目标状态色条，并在检测到目标时绘制居中红框。
 * `src/ph1p35_video_top.v`：面向安路平台的顶层，接口为标准 RGB888 + `vsync/hsync/de`。
 
-## 必须接入开发板参考工程的部分
+## 硬件处理链路
 
-本工程的完整硬件适配基线已经复制到 `reference_edge_project/`；同时也可参考现有资料中的
-`HX1P35A_Contest_202606/lab_ex4_red_detect_SC520`（SC520 传感器版本）：
+本工程的完整硬件适配基线和视觉算法已经集成在 `reference_edge_project/`。当前有效链路为：
 
-1. 使用其中的 MIPI D-PHY RX、`csi_unpacket_2lane.v`、RAW10 解包、ISP/demosaic，把摄像头转为 RGB888 流。
-2. 将 ISP 的 `pixel_clk/rst_n/vsync/hsync/de/rgb888` 接到 `ph1p35_video_top` 的 `I_pix_*`。
-3. 将 `O_pix_*` 接到该示例已有的 HDMI/DSI 输出链路。显示接口采用何种芯片、引脚和时钟取决于开发板原理图。
-4. 在 Tang Dynasty 新建 PH1P35A 项目，加入 `src/` 文件，并按 `constraints/board_template.adc` 填写真实管脚与时钟。随后生成/加入参考工程所需的 PLL、MIPI、DDR IP。
+`SC520 → MIPI D-PHY RX → RAW10 解包 → ISP/demosaic → DDR 帧缓存 → 视觉处理 → HDMI`
+
+直接使用 Tang Dynasty 打开 `reference_edge_project/td_project/camera_to_dsi_display.al`。无需重新创建工程，也不要把根目录 `src/` 直接加入当前工程；`src/` 是早期独立算法样例，实际接入版本位于 `reference_edge_project/user_source/hdl_source/hx1p35_port/`。
 
 ## 与原 Xilinx 工程的对应关系
 
@@ -35,7 +35,7 @@
 
 ## 重要限制
 
-* `reference_edge_project/` 是完整且可打开的 `.al` 工程；`src/` 是本次新增的可复用处理核心。二者尚未自动合并，因为当前参考工程已自带 `edge_detect_96.v`，而新增核心采用 RGB888 视频流接口；合并前需在 `design_top_wrapper.v` 中按实际视频时钟域选择一个处理链。
+* `reference_edge_project/` 是当前完整且可打开的 `.al` 工程；`src/` 仅保留为早期独立样例，当前综合使用的是 `hx1p35_port/` 内的接入版本。
 * Sobel 行缓存最大宽度由 `IMAGE_WIDTH` 参数决定，必须与摄像头实际有效像素宽度一致；默认 1280。
 * 处理核心不使用 DDR，因此可先完成低延迟直通显示；若要保留原工程的帧缓存、多路切换或网络传输，需在该核心外接安路 DDR/以太网 IP。
 
@@ -44,7 +44,7 @@
 * 已复制的 `reference_edge_project` 含 93 个 Verilog 文件与完整 Tang Dynasty 项目文件；已有实现产物为 `td_project/camera_to_dsi_display_Runs/phy_1/camera_to_dsi_display.bit`。
 * 保存的 `final_timing.rpt` 显示参考工程实现通过：setup WNS `1.163 ns`、hold WNS `0.020 ns`、0 个违规端点。
 * 本机未安装构建脚本要求的 `E:/Anlogic/TD_6.2.1_Engineer_6.2.168.116/bin/td_commands_prompt.exe`，已实际尝试启动并得到“命令未找到”，因此无法在本机对本次新增的 `src/` 文件重跑综合。
-* `src/` 文件是独立 RGB888 流模块，尚未加入参考工程的 `.al` 源文件集；直接把它们加入工程不会替代现有 `edge_detect_96.v`，必须先在 `design_top_wrapper.v` 的 ISP/显示路径完成一次明确的接口选择和时钟域接入。
+* SC520 与视觉处理源码已加入 `.al` 源文件集；本机未安装 TD，因此当前分支仍需在装有 Tang Dynasty 的电脑上重新综合、布局布线并完成实机验证。
 # 当前已接入的可运行功能
 
 在 `reference_edge_project` 的 MIPI → ISP → DDR 帧缓存 → HDMI 参考链路上，已加入纯 RTL 显示侧视觉功能：
