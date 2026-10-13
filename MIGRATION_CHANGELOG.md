@@ -45,3 +45,11 @@
 - 增加 Sensor ID 与 I2C 错误状态保留信号，便于 Tang Dynasty 在线调试。
 - DDR、ISP、HDMI 和现有视觉算法链路未改动；旧 `uics500_cfg` 文件仅保留作历史参考，不再加入 TD 编译工程。
 
+## 板级引脚复核修正
+
+- 根据 HX1P35A 新版开发板手册和原理图，将系统复位改到板载 KEY1/D5、算法切换改到 KEY2/A9、蜂鸣开关改到 KEY3/B9；三个输入均为低有效并启用上拉。
+- 顶层 `I_button` 由只读但误声明的 `inout` 修正为 `input`。
+- 删除无实际 HDMI 用途的 `O_screen_pwm` 顶层输出及 R11 约束，释放以太网 PHY 的 TXD0；同时释放原先被误作复位输入的以太网 TX_EN/R10。
+- `S_rst_n` 与 `S_hdmi_rst_n` 现同时受 PLL 锁定和板载 KEY1 控制，复位键可真正复位视频与视觉流水线。
+- 摄像头 K3/J3/L3/L2、蜂鸣器 C12、HDMI G16/F17/H14/C17、MIPI 硬核 Pad 与 DDR IP 内部约束经复核保持不变。
+

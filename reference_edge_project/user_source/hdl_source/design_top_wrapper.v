@@ -9,9 +9,8 @@ module design_top_wrapper (
     output wire       O_cam_24m,
     output wire       O_cam_rst,
       
-    inout wire [1:0]  I_button,
+    input wire [1:0]  I_button, //【HX1P35A-移植适配】板载 KEY2/KEY3，低电平按下。
 
-    output wire       O_screen_pwm,
     output wire       O_buzzer_n, //【HX1P35A-移植适配】板载蜂鸣器为低电平告警输出。
     output wire       O_tmds_ch0_p,
     output wire       O_tmds_ch1_p,
@@ -219,13 +218,12 @@ module design_top_wrapper (
     wire        S_lane_error_any;
 
 
-    assign O_screen_pwm = 1'b1;
     assign O_buzzer_n = ~(S_alarm_enable && (S_buzzer_count != 0)); //【HX1P35A-移植适配】目标首次出现时低有效鸣叫约 200ms。
     assign S_video_out_vsync = ~S_hdmi_vsync;
 	
 	
-    assign S_rst_n 		= S_pll_lock;
-    assign S_hdmi_rst_n = S_pll_lock;
+    assign S_rst_n 		= S_pll_lock && I_rst_n; //【HX1P35A-移植适配】板载 KEY1 同步控制全局低有效复位。
+    assign S_hdmi_rst_n = S_pll_lock && I_rst_n; //【HX1P35A-移植适配】HDMI/视觉流水线同时响应板载复位键。
 
     //【HX1P35A-移植适配】目标由无到有时启动一次短鸣；目标持续存在不会反复触发。
     always @(posedge S_hdmi_pixel_clk or negedge S_hdmi_rst_n) begin

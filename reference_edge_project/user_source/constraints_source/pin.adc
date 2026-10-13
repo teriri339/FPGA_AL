@@ -1,16 +1,15 @@
 
 set_pin_assignment	{ I_sys_clk }			{ LOCATION = C4; IOSTANDARD  = LVCMOS33; PULLTYPE = PULLUP; }
-set_pin_assignment	{ I_rst_n }				{ LOCATION = R10; IOSTANDARD = LVCMOS33; PULLTYPE = PULLUP; }
+set_pin_assignment	{ I_rst_n }				{ LOCATION = D5; IOSTANDARD = LVCMOS33; PULLTYPE = PULLUP; } #【HX1P35A-移植适配】板载 KEY1，低有效系统复位；释放以太网 TX_EN/R10。
 
 set_pin_assignment	{ O_cam_scl }		{ LOCATION = K3; IOSTANDARD  = LVCMOS33; DRIVESTRENGTH = 8; PULLTYPE = PULLUP; }
 set_pin_assignment	{ IO_cam_sda }		{ LOCATION = J3; IOSTANDARD  = LVCMOS33; DRIVESTRENGTH = 8; PULLTYPE = PULLUP; }
 set_pin_assignment	{ O_cam_24m }	{ LOCATION = L3; IOSTANDARD  = LVCMOS33; DRIVESTRENGTH = 8; PULLTYPE = PULLUP; }
 set_pin_assignment	{ O_cam_rst }		{ LOCATION = L2; IOSTANDARD  = LVCMOS33; DRIVESTRENGTH = 8; PULLTYPE = PULLUP; }
 
-set_pin_assignment	{ I_button[0] }			{ LOCATION = N2;  IOSTANDARD = LVCMOS33; DRIVESTRENGTH = 8; PULLTYPE = PULLUP; }
-set_pin_assignment	{ I_button[1] }			{ LOCATION = J14; IOSTANDARD = LVCMOS33; DRIVESTRENGTH = 8; PULLTYPE = PULLUP; }
+set_pin_assignment	{ I_button[0] }			{ LOCATION = A9; IOSTANDARD = LVCMOS33; PULLTYPE = PULLUP; } #【HX1P35A-移植适配】板载 KEY2：切换图像算法。
+set_pin_assignment	{ I_button[1] }			{ LOCATION = B9; IOSTANDARD = LVCMOS33; PULLTYPE = PULLUP; } #【HX1P35A-移植适配】板载 KEY3：开关蜂鸣告警。
 
-set_pin_assignment	{ O_screen_pwm } 		{ LOCATION = R11; IOSTANDARD = LVCMOS33; DRIVESTRENGTH = 8; PULLTYPE = PULLDOWN; }
 set_pin_assignment	{ O_buzzer_n } 		{ LOCATION = C12; IOSTANDARD = LVCMOS33; DRIVESTRENGTH = 8; PULLTYPE = PULLUP; } #【HX1P35A-移植适配】板载蜂鸣器，低有效。
 set_pin_assignment	{ O_tmds_ch0_p }		{ LOCATION = G16; IOSTANDARD = TMDS33; PULLTYPE = NONE; }
 set_pin_assignment	{ O_tmds_ch1_p }		{ LOCATION = F17; IOSTANDARD = TMDS33; PULLTYPE = NONE; }
