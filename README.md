@@ -4,6 +4,8 @@
 
 当前开发分支为 `WZY`。工程目录导航和分支使用规则见 `docs/PROJECT_STRUCTURE.md`；`main` 仅保留稳定基线，不直接覆盖。
 
+重要版本的评估结果、位流校验值和安全回退方法见 `docs/VERSION_CHECKPOINTS.md`；未完成实拍验证的参数版本只标记为候选版，不提前列为稳定里程碑。
+
 旧 Vivado 工程的逐模块迁移状态、已带入的独立 RTL 与无法原样迁移的硬件/IP 依赖见 `docs/LEGACY_CODE_MIGRATION.md`。
 
 目录内的 `reference_edge_project/` 是完整的安路官方边缘检测工程基线（PH1P35MDG324），包括 MIPI D-PHY RX、SC520 摄像头配置、RAW10 解包、ISP、DDR、HDMI、PLL、FIFO、安路工程文件与 pin/SDC 约束。当前摄像头工作模式为 1280×720@60、RAW10、2 Lane、828 Mbps/Lane。Tang Dynasty 工程入口为：`reference_edge_project/td_project/camera_to_dsi_display.al`。
