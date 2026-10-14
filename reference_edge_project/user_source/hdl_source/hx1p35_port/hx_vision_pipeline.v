@@ -3,12 +3,12 @@
 module hx_vision_pipeline #(
     parameter IMAGE_WIDTH = 1280,
     parameter MIN_TARGET_PIXELS = 24'd800,
-    parameter SOBEL_THRESHOLD_DARK = 12'd56, //【HX1P35A-移植适配】局部极大值细化后降低暗光门限，保留较弱物体轮廓。
-    parameter SOBEL_THRESHOLD_NORMAL = 12'd80, //【HX1P35A-移植适配】普通室内照明兼顾文字细线与背景噪声。
-    parameter SOBEL_THRESHOLD_BRIGHT = 12'd112, //【HX1P35A-移植适配】明亮场景弱边缘门限，保留设备和座椅轮廓。
-    parameter SOBEL_STRONG_THRESHOLD_DARK = 12'd96, //【HX1P35A-移植适配】暗光强边缘门限，抑制增益造成的连续细碎噪声。
-    parameter SOBEL_STRONG_THRESHOLD_NORMAL = 12'd128, //【HX1P35A-移植适配】普通室内场景适度放宽强边缘门限，补回暗部主体轮廓。
-    parameter SOBEL_STRONG_THRESHOLD_BRIGHT = 12'd192, //【HX1P35A-移植适配】明亮场景提高强边缘门限，压制高频纹理。
+    parameter SOBEL_THRESHOLD_DARK = 12'd48, //【HX1P35A-移植适配】暗光弱边缘门限小幅降低，自动曝光稳定后补回屋顶接缝等低对比轮廓。
+    parameter SOBEL_THRESHOLD_NORMAL = 12'd72, //【HX1P35A-移植适配】普通室内照明保留文字、线缆和衣物纹理等细线。
+    parameter SOBEL_THRESHOLD_BRIGHT = 12'd96, //【HX1P35A-移植适配】明亮场景适度降低弱边缘门限，减少主体轮廓断点。
+    parameter SOBEL_STRONG_THRESHOLD_DARK = 12'd88, //【HX1P35A-移植适配】暗光强边缘门限适度降低，为弱轮廓提供更多可靠锚点。
+    parameter SOBEL_STRONG_THRESHOLD_NORMAL = 12'd112, //【HX1P35A-移植适配】普通室内场景补回低对比主体细节，同时仍由 NMS 抑制噪声。
+    parameter SOBEL_STRONG_THRESHOLD_BRIGHT = 12'd176, //【HX1P35A-移植适配】明亮场景保留细小结构，避免过低门限造成高频背景铺满。
     parameter SOBEL_DETAIL_THRESHOLD_DARK = 12'd128, //【HX1P35A-移植适配】暗光下保留高置信度的非极大值邻边，增强纹理轮廓。
     parameter SOBEL_DETAIL_THRESHOLD_NORMAL = 12'd176, //【HX1P35A-移植适配】普通照明强细节补偿门限，兼顾线条厚度与噪点。
     parameter SOBEL_DETAIL_THRESHOLD_BRIGHT = 12'd256 //【HX1P35A-移植适配】明亮场景提高细节门限，避免高频背景铺满画面。
@@ -105,12 +105,14 @@ module hx_vision_pipeline #(
     reg strong_line [0:IMAGE_WIDTH-1]; //【HX1P35A-移植适配】保存上一行强边缘，建立因果 3 邻域连接关系。
     reg strong_left, strong_above_left; //【HX1P35A-移植适配】当前行左邻和上一行左上邻强边缘状态。
     wire strong_above = (gaussian_x_q < IMAGE_WIDTH) ? strong_line[gaussian_x_q] : 1'b0; //【HX1P35A-移植适配】按流水坐标读取上一行同列强边缘。
-    wire weak_connected_to_strong = ((gaussian_x_q != 0) && strong_left) || strong_above || ((gaussian_x_q != 0) && strong_above_left); //【HX1P35A-移植适配】弱边缘必须邻接强边缘，避免纹理链自行延伸。
+    wire strong_above_right = (gaussian_x_q < IMAGE_WIDTH-1) ? strong_line[gaussian_x_q+1'b1] : 1'b0; //【HX1P35A-移植适配】上一行右上像素尚未被本行覆盖，可补齐另一方向的斜线连接。
+    wire weak_connected_to_strong = ((gaussian_x_q != 0) && strong_left) || strong_above || ((gaussian_x_q != 0) && strong_above_left) || strong_above_right; //【HX1P35A-移植适配】使用完整的因果四邻域连接强弱边缘，减少斜向细节断裂。
     wire edge_seed = strong_edge_pixel || (weak_edge_pixel && weak_connected_to_strong); //【HX1P35A-移植适配】第一步只接受强边缘及其直接相邻弱边缘。
     reg bridge_line [0:IMAGE_WIDTH-1]; //【HX1P35A-移植适配】保存第一步边缘种子，仅供一次受控断点连接。
     reg bridge_left, bridge_above_left; //【HX1P35A-移植适配】保存边缘种子的左邻与左上邻状态。
     wire bridge_above = (gaussian_x_q < IMAGE_WIDTH) ? bridge_line[gaussian_x_q] : 1'b0; //【HX1P35A-移植适配】读取上一行同列边缘种子。
-    wire weak_connected_to_seed = ((gaussian_x_q != 0) && bridge_left) || bridge_above || ((gaussian_x_q != 0) && bridge_above_left); //【HX1P35A-移植适配】允许弱边缘在种子周围再延伸一个像素。
+    wire bridge_above_right = (gaussian_x_q < IMAGE_WIDTH-1) ? bridge_line[gaussian_x_q+1'b1] : 1'b0; //【HX1P35A-移植适配】补充右上方向的一次性弱边缘连接。
+    wire weak_connected_to_seed = ((gaussian_x_q != 0) && bridge_left) || bridge_above || ((gaussian_x_q != 0) && bridge_above_left) || bridge_above_right; //【HX1P35A-移植适配】允许弱边缘沿四个已到达方向延伸一个像素，但不无限传播。
     wire edge_pixel = edge_seed || (weak_edge_pixel && weak_connected_to_seed); //【HX1P35A-移植适配】补齐短断点但不回写最终结果，阻止弱纹理无限传播。
     wire detail_edge_pixel = nms_valid && (mag_mid_d1 >= sobel_detail_threshold); //【HX1P35A-移植适配】对足够强的梯度取消局部极大值限制，恢复参考效果中的粗亮细节。
     wire edge_core = edge_pixel || detail_edge_pixel; //【HX1P35A-移植适配】融合细化主轮廓与高置信度强细节。
