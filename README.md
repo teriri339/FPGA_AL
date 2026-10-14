@@ -44,13 +44,13 @@
 ## 本地检查记录（2026-10-08）
 
 * 已复制的 `reference_edge_project` 含 93 个 Verilog 文件与完整 Tang Dynasty 项目文件；已有实现产物为 `td_project/camera_to_dsi_display_Runs/phy_1/camera_to_dsi_display.bit`。
-* 2026-10-14 已使用本机安路 TD 6.2.168116 完成综合、布局布线和位流生成；自动曝光版本最终 setup WNS `0.323 ns`、hold WNS `0.020 ns`、0 个违规端点。
+* 2026-10-14 已使用本机安路 TD 6.2.168116 完成综合、布局布线和位流生成；自适应 Sobel 版本最终 setup WNS `0.110 ns`、hold WNS `0.020 ns`、0 个违规端点。
 * SC520、视觉处理源码、管脚与时序约束均已加入 `.al` 工程；最新标准位流位于 `td_project/camera_to_dsi_display_Runs/phy_1/camera_to_dsi_display.bit`，仍需烧录后进行摄像头实拍确认。
 # 当前已接入的可运行功能
 
 在 `reference_edge_project` 的 MIPI → ISP → DDR 帧缓存 → HDMI 参考链路上，已加入纯 RTL 显示侧视觉功能：
 
-- 按键循环选择原图、灰度、彩色目标高亮、真正的 3×3 Sobel 边缘图；
+- 按键循环选择原图、灰度、彩色目标高亮、真正的 3×3 Sobel 边缘图；Sobel 根据整帧亮度在 `40/64/96` 三档门限间自动切换，以兼顾室内木板弱边缘和高亮噪声；
 - 适配暗光的红／绿／蓝目标像素面积统计和上一帧包围框；COLOR 模式保留半亮原图作为背景；
 - 全画面亮度抽样闭环自动曝光：过暗时先增加曝光时间、到上限后增加增益，过亮时反向调整，并设置亮度死区和 16 帧调节间隔以减少闪烁；
 - HDMI 画面目标框与状态条 OSD；

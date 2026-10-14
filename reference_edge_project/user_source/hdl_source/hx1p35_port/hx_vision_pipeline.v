@@ -3,7 +3,9 @@
 module hx_vision_pipeline #(
     parameter IMAGE_WIDTH = 1280,
     parameter MIN_TARGET_PIXELS = 24'd800,
-    parameter SOBEL_THRESHOLD = 12'd160
+    parameter SOBEL_THRESHOLD_DARK = 12'd40, //【HX1P35A-移植适配】暗光下保留床沿、木板缝等弱边缘。
+    parameter SOBEL_THRESHOLD_NORMAL = 12'd64, //【HX1P35A-移植适配】普通室内照明的默认边缘门限。
+    parameter SOBEL_THRESHOLD_BRIGHT = 12'd96 //【HX1P35A-移植适配】高亮画面提高门限以抑制纹理噪点。
 ) (
     input wire I_clk, input wire I_rst_n,
     input wire I_vsync, input wire I_hsync, input wire I_de,
@@ -45,7 +47,9 @@ module hx_vision_pipeline #(
     wire [10:0] gy_abs = (gy_pos >= gy_neg) ? (gy_pos - gy_neg) : (gy_neg - gy_pos);
     wire [11:0] sobel_mag = {1'b0,gx_abs} + {1'b0,gy_abs};
     wire sobel_valid = I_de && (pix_x >= 11'd2) && (pix_y >= 11'd2);
-    wire edge_pixel = sobel_valid && (sobel_mag >= SOBEL_THRESHOLD);
+    wire [11:0] sobel_threshold = (O_frame_luma < 8'd72) ? SOBEL_THRESHOLD_DARK :
+                                  (O_frame_luma < 8'd145) ? SOBEL_THRESHOLD_NORMAL : SOBEL_THRESHOLD_BRIGHT; //【HX1P35A-移植适配】依据上一帧全局亮度自适应门限。
+    wire edge_pixel = sobel_valid && (sobel_mag >= sobel_threshold); //【HX1P35A-移植适配】弱光降低阈值，高亮自动抑噪。
 
     //【HX1P35A-移植适配】暗光下采用较低亮度门限和 9 位通道差比较，兼顾实拍颜色与抗噪声能力。
     wire red_hit = (I_rgb[23:16] > 8'd80) && ({1'b0,I_rgb[23:16]} > ({1'b0,I_rgb[15:8]} + 9'd24)) && ({1'b0,I_rgb[23:16]} > ({1'b0,I_rgb[7:0]} + 9'd24)); //【HX1P35A-移植适配】放宽红色检测。
