@@ -15,6 +15,18 @@
 
 ## 当前候选版
 
+### candidate-20261015-symmetric-8neigh-hysteresis
+
+- 状态：候选版；完整综合、布局布线、位流生成均通过，等待同场景实拍确认。
+- 主要功能：新增以 3×3 行缓存构成的对称 8 邻域双阈值滞后连接。窗口中心为弱边时，只要八个邻点中存在强边即保留；原有因果连接、连续弱边筛选和强细节补偿仍保留。
+- 参考方式：借鉴 `rameloni/canny-edge-detecion-hls` 的流式行缓存/滑动窗口架构，未复制其实现；其公开代码的强邻域判断与算法意图不一致，因此本工程独立实现并使用正确的强边候选判定。
+- 预期改进：补回扫描方向“未来侧”（右侧、下侧）才出现强锚点的弱边，有利于人物衣物、灯管、桌面纹理、斜线和发丝的连续性。
+- 限制与风险：当前是一跳 8 邻域连接，并非任意长度的递归弱边追踪；高纹理场景可能增加细节或少量噪点，必须与上一版在相同场景、曝光、距离下实拍比较。
+- 实现结果：setup WNS `0.135 ns`、hold WNS `0.020 ns`、0 个违规端点；16084 slices（75.81%）、39 RAM、23 DSP。
+- 标准位流 SHA256：`5288CD29A8C113545357C98F83FD46DF75B9EFC61B7D81671D1FB3D383C8EB84`。
+- 烧录文件：`reference_edge_project/td_project/camera_to_dsi_display_Runs/best_result/camera_to_dsi_display.bit`。
+- 待确认：同一人像与高亮灯管场景下，对比 `candidate-20261014-coherent-weak-edges` 的连续度、轮廓噪点和灯管边缘；确认明显提升后再升级为推荐回退点。
+
 ### candidate-20261014-coherent-weak-edges
 
 - 提交：`db68b23`

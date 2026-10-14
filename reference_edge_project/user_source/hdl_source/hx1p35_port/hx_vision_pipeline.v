@@ -122,8 +122,24 @@ module hx_vision_pipeline #(
     wire bridge_above_right = (gaussian_x_q < IMAGE_WIDTH-1) ? bridge_line[gaussian_x_q+1'b1] : 1'b0; //【HX1P35A-移植适配】补充右上方向的一次性弱边缘连接。
     wire weak_connected_to_seed = ((gaussian_x_q != 0) && bridge_left) || bridge_above || ((gaussian_x_q != 0) && bridge_above_left) || bridge_above_right; //【HX1P35A-移植适配】允许弱边缘沿四个已到达方向延伸一个像素，但不无限传播。
     wire edge_pixel = edge_seed || (weak_edge_pixel && weak_connected_to_seed); //【HX1P35A-移植适配】补齐短断点但不回写最终结果，阻止弱纹理无限传播。
+    //【HX1P35A-移植适配】参考流式 Canny 的 3x3 行缓存做法，将双阈值候选延迟到窗口中心再判定。
+    // 这样弱边能看到右侧、下侧的强边锚点，补足仅按扫描方向判断时容易丢失的灯管、发丝和斜线。
+    reg weak_hyst_line1 [0:IMAGE_WIDTH-1], weak_hyst_line2 [0:IMAGE_WIDTH-1];
+    reg strong_hyst_line1 [0:IMAGE_WIDTH-1], strong_hyst_line2 [0:IMAGE_WIDTH-1];
+    reg weak_hyst_top_d2, weak_hyst_top_d1, weak_hyst_mid_d2, weak_hyst_mid_d1, weak_hyst_bot_d2, weak_hyst_bot_d1;
+    reg strong_hyst_top_d2, strong_hyst_top_d1, strong_hyst_mid_d2, strong_hyst_mid_d1, strong_hyst_bot_d2, strong_hyst_bot_d1;
+    wire weak_hyst_top_right = (gaussian_x_q < IMAGE_WIDTH) ? weak_hyst_line2[gaussian_x_q] : 1'b0;
+    wire weak_hyst_mid_right = (gaussian_x_q < IMAGE_WIDTH) ? weak_hyst_line1[gaussian_x_q] : 1'b0;
+    wire strong_hyst_top_right = (gaussian_x_q < IMAGE_WIDTH) ? strong_hyst_line2[gaussian_x_q] : 1'b0;
+    wire strong_hyst_mid_right = (gaussian_x_q < IMAGE_WIDTH) ? strong_hyst_line1[gaussian_x_q] : 1'b0;
+    wire hyst_window_valid = nms_valid && (gaussian_x_q >= 11'd8) && (gaussian_y_q >= 11'd8); //【HX1P35A-移植适配】等待候选的完整 3x3 窗口，边界不引用上一帧残留。
+    wire strong_hyst_neighborhood = strong_hyst_top_d2 || strong_hyst_top_d1 || strong_hyst_top_right ||
+                                    strong_hyst_mid_d2 || strong_hyst_mid_right ||
+                                    strong_hyst_bot_d2 || strong_hyst_bot_d1 || strong_edge_pixel; //【HX1P35A-移植适配】中心以外的八个方向均可作为弱边的强锚点。
+    wire symmetric_hyst_edge = hyst_window_valid && (strong_hyst_mid_d1 ||
+                               (weak_hyst_mid_d1 && strong_hyst_neighborhood)); //【HX1P35A-移植适配】真正对称的 8 邻域一跳滞后连接。
     wire detail_edge_pixel = nms_valid && (mag_mid_d1 >= sobel_detail_threshold); //【HX1P35A-移植适配】对足够强的梯度取消局部极大值限制，恢复参考效果中的粗亮细节。
-    wire edge_core = edge_pixel || coherent_weak_edge || detail_edge_pixel; //【HX1P35A-移植适配】融合主轮廓、连续弱纹理与高置信度强细节。
+    wire edge_core = edge_pixel || symmetric_hyst_edge || coherent_weak_edge || detail_edge_pixel; //【HX1P35A-移植适配】融合因果连接、对称 8 邻域连接、连续弱纹理与强细节。
     reg edge_core_q, edge_core_de_q; //【HX1P35A-移植适配】融合边缘增加一级寄存，切断梯度比较到 HDMI 输出的长组合路径。
     reg [10:0] edge_x_q; //【HX1P35A-移植适配】保存融合边缘对应横坐标，驱动后级加粗行缓存。
     reg edge_dilate_line [0:IMAGE_WIDTH-1]; //【HX1P35A-移植适配】保存上一行融合边缘，用于低成本 2x2 形态学膨胀。
@@ -345,6 +361,8 @@ module hx_vision_pipeline #(
             weak_left <= 0; weak_above_left <= 0; //【HX1P35A-移植适配】复位连续弱纹理状态。
             strong_left <= 0; strong_above_left <= 0; //【HX1P35A-移植适配】复位 Sobel 双阈值连接状态。
             bridge_left <= 0; bridge_above_left <= 0; //【HX1P35A-移植适配】复位单像素断点连接状态。
+            weak_hyst_top_d2 <= 0; weak_hyst_top_d1 <= 0; weak_hyst_mid_d2 <= 0; weak_hyst_mid_d1 <= 0; weak_hyst_bot_d2 <= 0; weak_hyst_bot_d1 <= 0;
+            strong_hyst_top_d2 <= 0; strong_hyst_top_d1 <= 0; strong_hyst_mid_d2 <= 0; strong_hyst_mid_d1 <= 0; strong_hyst_bot_d2 <= 0; strong_hyst_bot_d1 <= 0; //【HX1P35A-移植适配】复位对称 8 邻域滞后窗口。
             edge_core_q <= 0; edge_core_de_q <= 0; edge_x_q <= 0; //【HX1P35A-移植适配】复位强细节补偿流水级。
             edge_dilate_left <= 0; edge_dilate_above_left <= 0; //【HX1P35A-移植适配】复位边缘加粗邻域状态。
             color_left <= 0; color_above_left <= 0; //【HX1P35A-移植适配】复位颜色邻域一致性状态。
@@ -416,6 +434,10 @@ module hx_vision_pipeline #(
                 bridge_line[gaussian_x_q] <= edge_seed; //【HX1P35A-移植适配】仅存第一步种子，限制断点连接深度。
                 bridge_left <= edge_seed; //【HX1P35A-移植适配】保存当前种子供下一像素连接。
                 bridge_above_left <= (gaussian_x_q == 0) ? 1'b0 : bridge_above; //【HX1P35A-移植适配】保存左上种子以补斜向短断点。
+                weak_hyst_line2[gaussian_x_q] <= weak_hyst_line1[gaussian_x_q];
+                weak_hyst_line1[gaussian_x_q] <= weak_edge_pixel;
+                strong_hyst_line2[gaussian_x_q] <= strong_hyst_line1[gaussian_x_q];
+                strong_hyst_line1[gaussian_x_q] <= strong_edge_pixel; //【HX1P35A-移植适配】保存双阈值候选，供下一行组成完整 3x3 滞后窗口。
                 mag_line2[gaussian_x_q] <= mag_line1[gaussian_x_q]; //【HX1P35A-移植适配】Sobel 幅值行缓存向上两行推进。
                 mag_line1[gaussian_x_q] <= sobel_mag; //【HX1P35A-移植适配】保存当前 Sobel 幅值供下一行细化。
                 dir_line1[gaussian_x_q] <= sobel_direction; //【HX1P35A-移植适配】保存当前四方向编码供下一行峰值比较。
@@ -429,6 +451,12 @@ module hx_vision_pipeline #(
                     mag_mid_d2 <= 0; mag_mid_d1 <= mag_mid_right; //【HX1P35A-移植适配】新行重新装载幅值窗口中行。
                     mag_bot_d2 <= 0; mag_bot_d1 <= sobel_mag; //【HX1P35A-移植适配】新行重新装载幅值窗口下行。
                     dir_mid_d2 <= 0; dir_mid_d1 <= dir_mid_right; //【HX1P35A-移植适配】新行重新装载方向窗口。
+                    weak_hyst_top_d2 <= 0; weak_hyst_top_d1 <= weak_hyst_top_right;
+                    weak_hyst_mid_d2 <= 0; weak_hyst_mid_d1 <= weak_hyst_mid_right;
+                    weak_hyst_bot_d2 <= 0; weak_hyst_bot_d1 <= weak_edge_pixel;
+                    strong_hyst_top_d2 <= 0; strong_hyst_top_d1 <= strong_hyst_top_right;
+                    strong_hyst_mid_d2 <= 0; strong_hyst_mid_d1 <= strong_hyst_mid_right;
+                    strong_hyst_bot_d2 <= 0; strong_hyst_bot_d1 <= strong_edge_pixel; //【HX1P35A-移植适配】行首重置对称滞后窗口，防止跨行连接。
                 end else begin
                     top_d2 <= top_d1; top_d1 <= top_right;
                     mid_d2 <= mid_d1; mid_d1 <= mid_right;
@@ -437,6 +465,12 @@ module hx_vision_pipeline #(
                     mag_mid_d2 <= mag_mid_d1; mag_mid_d1 <= mag_mid_right; //【HX1P35A-移植适配】幅值窗口中行水平滑动。
                     mag_bot_d2 <= mag_bot_d1; mag_bot_d1 <= sobel_mag; //【HX1P35A-移植适配】幅值窗口下行水平滑动。
                     dir_mid_d2 <= dir_mid_d1; dir_mid_d1 <= dir_mid_right; //【HX1P35A-移植适配】方向窗口水平滑动。
+                    weak_hyst_top_d2 <= weak_hyst_top_d1; weak_hyst_top_d1 <= weak_hyst_top_right;
+                    weak_hyst_mid_d2 <= weak_hyst_mid_d1; weak_hyst_mid_d1 <= weak_hyst_mid_right;
+                    weak_hyst_bot_d2 <= weak_hyst_bot_d1; weak_hyst_bot_d1 <= weak_edge_pixel;
+                    strong_hyst_top_d2 <= strong_hyst_top_d1; strong_hyst_top_d1 <= strong_hyst_top_right;
+                    strong_hyst_mid_d2 <= strong_hyst_mid_d1; strong_hyst_mid_d1 <= strong_hyst_mid_right;
+                    strong_hyst_bot_d2 <= strong_hyst_bot_d1; strong_hyst_bot_d1 <= strong_edge_pixel; //【HX1P35A-移植适配】每像素推进 3x3 双阈值窗口。
                 end
             end
 
