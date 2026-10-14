@@ -3,9 +3,9 @@
 module hx_vision_pipeline #(
     parameter IMAGE_WIDTH = 1280,
     parameter MIN_TARGET_PIXELS = 24'd800,
-    parameter SOBEL_THRESHOLD_DARK = 12'd64, //【HX1P35A-移植适配】暗光门限兼顾弱边缘与高增益噪声。
-    parameter SOBEL_THRESHOLD_NORMAL = 12'd96, //【HX1P35A-移植适配】普通室内照明提高门限，减少木纹雪花点。
-    parameter SOBEL_THRESHOLD_BRIGHT = 12'd128 //【HX1P35A-移植适配】高亮画面进一步抑制细碎纹理。
+    parameter SOBEL_THRESHOLD_DARK = 12'd56, //【HX1P35A-移植适配】局部极大值细化后降低暗光门限，保留较弱物体轮廓。
+    parameter SOBEL_THRESHOLD_NORMAL = 12'd80, //【HX1P35A-移植适配】普通室内照明兼顾文字细线与背景噪声。
+    parameter SOBEL_THRESHOLD_BRIGHT = 12'd112 //【HX1P35A-移植适配】明亮场景抑制细碎纹理，同时保留设备和座椅边缘。
 ) (
     input wire I_clk, input wire I_rst_n,
     input wire I_vsync, input wire I_hsync, input wire I_de,
@@ -52,7 +52,19 @@ module hx_vision_pipeline #(
     wire sobel_valid = I_de && (pix_x >= 11'd2) && (pix_y >= 11'd2);
     wire [11:0] sobel_threshold = (O_frame_luma < 8'd72) ? SOBEL_THRESHOLD_DARK :
                                   (O_frame_luma < 8'd145) ? SOBEL_THRESHOLD_NORMAL : SOBEL_THRESHOLD_BRIGHT; //【HX1P35A-移植适配】依据上一帧全局亮度自适应门限。
-    wire raw_edge_pixel = sobel_valid && (sobel_mag >= sobel_threshold); //【HX1P35A-移植适配】阈值后的原始边缘候选。
+    wire sobel_vertical_edge = (gx_abs >= gy_abs); //【HX1P35A-移植适配】梯度横向占优时对应画面中的纵向边缘。
+    reg [11:0] mag_line1 [0:IMAGE_WIDTH-1]; //【HX1P35A-移植适配】保存上一行 Sobel 幅值，构成局部极大值窗口。
+    reg [11:0] mag_line2 [0:IMAGE_WIDTH-1]; //【HX1P35A-移植适配】保存上两行 Sobel 幅值，供纵向梯度峰值比较。
+    reg         dir_line1 [0:IMAGE_WIDTH-1]; //【HX1P35A-移植适配】保存上一行主梯度方向。
+    reg [11:0] mag_top_d2, mag_top_d1, mag_mid_d2, mag_mid_d1, mag_bot_d2, mag_bot_d1; //【HX1P35A-移植适配】Sobel 幅值 3x3 滑动窗口。
+    reg dir_mid_d2, dir_mid_d1; //【HX1P35A-移植适配】上一行相邻像素的主梯度方向。
+    wire [11:0] mag_top_right = (pix_x < IMAGE_WIDTH) ? mag_line2[pix_x] : 12'd0; //【HX1P35A-移植适配】局部极大值窗口右上幅值。
+    wire [11:0] mag_mid_right = (pix_x < IMAGE_WIDTH) ? mag_line1[pix_x] : 12'd0; //【HX1P35A-移植适配】局部极大值窗口右侧幅值。
+    wire dir_mid_right = (pix_x < IMAGE_WIDTH) ? dir_line1[pix_x] : 1'b0; //【HX1P35A-移植适配】读取上一行当前列方向。
+    wire nms_valid = sobel_valid && (pix_x >= 11'd2) && (pix_y >= 11'd4); //【HX1P35A-移植适配】等待 Sobel 幅值窗口完整后再输出细化边缘。
+    wire nms_peak = dir_mid_d1 ? ((mag_mid_d1 >= mag_mid_d2) && (mag_mid_d1 > mag_mid_right)) :
+                                 ((mag_mid_d1 >= mag_top_d1) && (mag_mid_d1 > mag_bot_d1)); //【HX1P35A-移植适配】沿主梯度方向仅保留局部峰值，压细宽边缘。
+    wire raw_edge_pixel = nms_valid && nms_peak && (mag_mid_d1 >= sobel_threshold); //【HX1P35A-移植适配】细化后的自适应阈值边缘候选。
     reg edge_line [0:IMAGE_WIDTH-1]; //【HX1P35A-移植适配】保存上一行边缘，用相邻一致性去除孤立噪点。
     reg edge_left, edge_above_left; //【HX1P35A-移植适配】当前行左邻和上一行左上邻边缘状态。
     wire edge_above = (pix_x < IMAGE_WIDTH) ? edge_line[pix_x] : 1'b0; //【HX1P35A-移植适配】上一行同列边缘。
@@ -261,6 +273,8 @@ module hx_vision_pipeline #(
         if (!I_rst_n) begin
             x <= 0; y <= 0;
             top_d2 <= 0; top_d1 <= 0; mid_d2 <= 0; mid_d1 <= 0; bot_d2 <= 0; bot_d1 <= 0;
+            mag_top_d2 <= 0; mag_top_d1 <= 0; mag_mid_d2 <= 0; mag_mid_d1 <= 0; mag_bot_d2 <= 0; mag_bot_d1 <= 0; //【HX1P35A-移植适配】复位 Sobel 幅值细化窗口。
+            dir_mid_d2 <= 0; dir_mid_d1 <= 0; //【HX1P35A-移植适配】复位局部极大值方向窗口。
             edge_left <= 0; edge_above_left <= 0; //【HX1P35A-移植适配】复位 Sobel 相邻一致性状态。
             color_left <= 0; color_above_left <= 0; //【HX1P35A-移植适配】复位颜色邻域一致性状态。
             cur_count <= 0; cur_red_count <= 0; cur_green_count <= 0; cur_blue_count <= 0;
@@ -297,6 +311,9 @@ module hx_vision_pipeline #(
                 edge_line[pix_x] <= raw_edge_pixel; //【HX1P35A-移植适配】写入本行原始边缘，供下一行一致性判断。
                 edge_left <= raw_edge_pixel; //【HX1P35A-移植适配】保存当前边缘供下一像素水平连续性判断。
                 edge_above_left <= (pix_x == 0) ? 1'b0 : edge_above; //【HX1P35A-移植适配】保存左上邻边缘，保留斜线。
+                mag_line2[pix_x] <= mag_line1[pix_x]; //【HX1P35A-移植适配】Sobel 幅值行缓存向上两行推进。
+                mag_line1[pix_x] <= sobel_mag; //【HX1P35A-移植适配】保存当前 Sobel 幅值供下一行细化。
+                dir_line1[pix_x] <= sobel_vertical_edge; //【HX1P35A-移植适配】保存当前主梯度方向供下一行峰值比较。
                 color_line[pix_x] <= raw_color; //【HX1P35A-移植适配】写入本行原始颜色候选，供下一行空间一致性判断。
                 color_left <= raw_color; //【HX1P35A-移植适配】保存当前候选供下一像素水平邻域判断。
                 color_above_left <= (pix_x == 0) ? 2'd0 : color_above; //【HX1P35A-移植适配】保存尚未被覆盖的上一行左上颜色。
@@ -306,10 +323,18 @@ module hx_vision_pipeline #(
                     top_d2 <= 0; top_d1 <= top_right;
                     mid_d2 <= 0; mid_d1 <= mid_right;
                     bot_d2 <= 0; bot_d1 <= gray;
+                    mag_top_d2 <= 0; mag_top_d1 <= mag_top_right; //【HX1P35A-移植适配】新行重新装载幅值窗口上行。
+                    mag_mid_d2 <= 0; mag_mid_d1 <= mag_mid_right; //【HX1P35A-移植适配】新行重新装载幅值窗口中行。
+                    mag_bot_d2 <= 0; mag_bot_d1 <= sobel_mag; //【HX1P35A-移植适配】新行重新装载幅值窗口下行。
+                    dir_mid_d2 <= 0; dir_mid_d1 <= dir_mid_right; //【HX1P35A-移植适配】新行重新装载方向窗口。
                 end else begin
                     top_d2 <= top_d1; top_d1 <= top_right;
                     mid_d2 <= mid_d1; mid_d1 <= mid_right;
                     bot_d2 <= bot_d1; bot_d1 <= gray;
+                    mag_top_d2 <= mag_top_d1; mag_top_d1 <= mag_top_right; //【HX1P35A-移植适配】幅值窗口上行水平滑动。
+                    mag_mid_d2 <= mag_mid_d1; mag_mid_d1 <= mag_mid_right; //【HX1P35A-移植适配】幅值窗口中行水平滑动。
+                    mag_bot_d2 <= mag_bot_d1; mag_bot_d1 <= sobel_mag; //【HX1P35A-移植适配】幅值窗口下行水平滑动。
+                    dir_mid_d2 <= dir_mid_d1; dir_mid_d1 <= dir_mid_right; //【HX1P35A-移植适配】方向窗口水平滑动。
                 end
             end
 
