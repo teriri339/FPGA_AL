@@ -3,9 +3,9 @@
 module hx_vision_pipeline #(
     parameter IMAGE_WIDTH = 1280,
     parameter MIN_TARGET_PIXELS = 24'd800,
-    parameter SOBEL_THRESHOLD_DARK = 12'd40, //【HX1P35A-移植适配】暗光下保留床沿、木板缝等弱边缘。
-    parameter SOBEL_THRESHOLD_NORMAL = 12'd64, //【HX1P35A-移植适配】普通室内照明的默认边缘门限。
-    parameter SOBEL_THRESHOLD_BRIGHT = 12'd96 //【HX1P35A-移植适配】高亮画面提高门限以抑制纹理噪点。
+    parameter SOBEL_THRESHOLD_DARK = 12'd64, //【HX1P35A-移植适配】暗光门限兼顾弱边缘与高增益噪声。
+    parameter SOBEL_THRESHOLD_NORMAL = 12'd96, //【HX1P35A-移植适配】普通室内照明提高门限，减少木纹雪花点。
+    parameter SOBEL_THRESHOLD_BRIGHT = 12'd128 //【HX1P35A-移植适配】高亮画面进一步抑制细碎纹理。
 ) (
     input wire I_clk, input wire I_rst_n,
     input wire I_vsync, input wire I_hsync, input wire I_de,
@@ -52,7 +52,11 @@ module hx_vision_pipeline #(
     wire sobel_valid = I_de && (pix_x >= 11'd2) && (pix_y >= 11'd2);
     wire [11:0] sobel_threshold = (O_frame_luma < 8'd72) ? SOBEL_THRESHOLD_DARK :
                                   (O_frame_luma < 8'd145) ? SOBEL_THRESHOLD_NORMAL : SOBEL_THRESHOLD_BRIGHT; //【HX1P35A-移植适配】依据上一帧全局亮度自适应门限。
-    wire edge_pixel = sobel_valid && (sobel_mag >= sobel_threshold); //【HX1P35A-移植适配】弱光降低阈值，高亮自动抑噪。
+    wire raw_edge_pixel = sobel_valid && (sobel_mag >= sobel_threshold); //【HX1P35A-移植适配】阈值后的原始边缘候选。
+    reg edge_line [0:IMAGE_WIDTH-1]; //【HX1P35A-移植适配】保存上一行边缘，用相邻一致性去除孤立噪点。
+    reg edge_left, edge_above_left; //【HX1P35A-移植适配】当前行左邻和上一行左上邻边缘状态。
+    wire edge_above = (pix_x < IMAGE_WIDTH) ? edge_line[pix_x] : 1'b0; //【HX1P35A-移植适配】上一行同列边缘。
+    wire edge_pixel = raw_edge_pixel && (((pix_x != 0) && edge_left) || edge_above || ((pix_x != 0) && edge_above_left)); //【HX1P35A-移植适配】保留连续水平、垂直和斜向边缘，过滤孤立白点。
 
     //【HX1P35A-移植适配】暗光下采用较低亮度门限和 9 位通道差比较，兼顾实拍颜色与抗噪声能力。
     wire red_hit = (I_rgb[23:16] > 8'd80) && ({1'b0,I_rgb[23:16]} > ({1'b0,I_rgb[15:8]} + 9'd24)) && ({1'b0,I_rgb[23:16]} > ({1'b0,I_rgb[7:0]} + 9'd24)); //【HX1P35A-移植适配】放宽红色检测。
@@ -164,7 +168,7 @@ module hx_vision_pipeline #(
     reg [23:0] stage_rgb;
     reg [10:0] draw_x, draw_y;
 
-    wire box_border = O_target_found && stage_de &&
+    wire box_border = (I_mode == 2'd2) && O_target_found && stage_de && //【HX1P35A-移植适配】目标框只在 COLOR 模式显示，避免干扰 Sobel 观察。
         ((((draw_x == box_xmin) || (draw_x == box_xmax)) && (draw_y >= box_ymin) && (draw_y <= box_ymax)) ||
          (((draw_y == box_ymin) || (draw_y == box_ymax)) && (draw_x >= box_xmin) && (draw_x <= box_xmax)));
 
@@ -246,6 +250,7 @@ module hx_vision_pipeline #(
         if (!I_rst_n) begin
             x <= 0; y <= 0;
             top_d2 <= 0; top_d1 <= 0; mid_d2 <= 0; mid_d1 <= 0; bot_d2 <= 0; bot_d1 <= 0;
+            edge_left <= 0; edge_above_left <= 0; //【HX1P35A-移植适配】复位 Sobel 相邻一致性状态。
             cur_count <= 0; cur_red_count <= 0; cur_green_count <= 0; cur_blue_count <= 0;
             cur_xmin <= 11'd2047; cur_ymin <= 11'd2047; cur_xmax <= 0; cur_ymax <= 0;
             box_xmin <= 0; box_ymin <= 0; box_xmax <= 0; box_ymax <= 0; box_color <= 0;
@@ -277,6 +282,9 @@ module hx_vision_pipeline #(
             end
 
             if (I_de && (pix_x < IMAGE_WIDTH)) begin
+                edge_line[pix_x] <= raw_edge_pixel; //【HX1P35A-移植适配】写入本行原始边缘，供下一行一致性判断。
+                edge_left <= raw_edge_pixel; //【HX1P35A-移植适配】保存当前边缘供下一像素水平连续性判断。
+                edge_above_left <= (pix_x == 0) ? 1'b0 : edge_above; //【HX1P35A-移植适配】保存左上邻边缘，保留斜线。
                 gray_line2[pix_x] <= gray_line1[pix_x];
                 gray_line1[pix_x] <= gray;
                 if (pix_x == 0) begin
