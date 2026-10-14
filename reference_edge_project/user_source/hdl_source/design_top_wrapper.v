@@ -11,7 +11,7 @@ module design_top_wrapper (
       
     input wire [1:0]  I_button, //【HX1P35A-移植适配】板载 KEY2/KEY3，低电平按下。
 
-    output wire       O_buzzer_n, //【HX1P35A-移植适配】板载蜂鸣器为低电平告警输出。
+    output wire       O_buzzer_n, //【HX1P35A-移植适配】板载无源蜂鸣器方波输出，空闲保持高电平。
     output wire       O_tmds_ch0_p,
     output wire       O_tmds_ch1_p,
     output wire       O_tmds_ch2_p,
@@ -177,8 +177,11 @@ module design_top_wrapper (
     wire        S_frame_luma_toggle; //【HX1P35A-移植适配】视频帧亮度更新翻转标志。
     wire        S_alarm_enable; //【HX1P35A-移植适配】目标告警逻辑保持使能，蜂鸣器声音由板载 SW5 硬件开关控制。
     reg         S_target_found_d; //【HX1P35A-移植适配】检测目标出现沿，避免蜂鸣器持续鸣叫。
-    reg [23:0]  S_buzzer_count; //【HX1P35A-移植适配】74.25MHz 像素时钟下约 200ms 蜂鸣计数。
-    localparam [23:0] C_BUZZER_CYCLES = 24'd14850000; //【HX1P35A-移植适配】74250000 * 0.2s。
+    reg [26:0]  S_buzzer_count; //【HX1P35A-移植适配】74.25MHz 像素时钟下约 1s 告警时长计数。
+    reg [14:0]  S_buzzer_tone_count; //【HX1P35A-移植适配】无源蜂鸣器约 2kHz 音频方波分频计数。
+    reg         S_buzzer_tone; //【HX1P35A-移植适配】仿照板载初始音乐工程驱动 C12 的翻转方波。
+    localparam [26:0] C_BUZZER_CYCLES = 27'd74250000; //【HX1P35A-移植适配】74250000 * 1s，保证告警清晰可闻。
+    localparam [14:0] C_BUZZER_HALF_PERIOD = 15'd18562; //【HX1P35A-移植适配】74.25MHz/(2*18562) 约为 2kHz。
     reg         S_dbg_raw_seen;
     reg         S_dbg_isp_seen;
     reg         S_dbg_ddr_wr_seen;
@@ -222,23 +225,39 @@ module design_top_wrapper (
     wire        S_lane_error_any;
 
 
-    assign O_buzzer_n = ~(S_alarm_enable && (S_buzzer_count != 0)); //【HX1P35A-移植适配】目标首次出现时低有效鸣叫约 200ms。
+    assign O_buzzer_n = (S_alarm_enable && (S_buzzer_count != 0)) ? S_buzzer_tone : 1'b1; //【HX1P35A-移植适配】告警期间输出约 2kHz 方波，空闲高电平关闭三极管。
     assign S_video_out_vsync = ~S_hdmi_vsync;
 	
 	
     assign S_rst_n 		= S_pll_lock && I_rst_n; //【HX1P35A-移植适配】板载 KEY1 同步控制全局低有效复位。
     assign S_hdmi_rst_n = S_pll_lock && I_rst_n; //【HX1P35A-移植适配】HDMI/视觉流水线同时响应板载复位键。
 
-    //【HX1P35A-移植适配】目标由无到有时启动一次短鸣；目标持续存在不会反复触发。
+    //【HX1P35A-移植适配】目标由无到有时播放一次约 1s 的 2kHz 告警音；目标持续存在不会反复触发。
     always @(posedge S_hdmi_pixel_clk or negedge S_hdmi_rst_n) begin
         if(!S_hdmi_rst_n) begin
             S_target_found_d <= 1'b0;
-            S_buzzer_count <= 24'd0;
+            S_buzzer_count <= 27'd0; //【HX1P35A-移植适配】复位告警时长计数。
+            S_buzzer_tone_count <= 15'd0; //【HX1P35A-移植适配】复位音频分频计数。
+            S_buzzer_tone <= 1'b1; //【HX1P35A-移植适配】复位时保持高电平关闭蜂鸣器三极管。
         end else begin
             S_target_found_d <= S_target_found;
-            if(!S_alarm_enable) S_buzzer_count <= 24'd0;
-            else if(S_target_found && !S_target_found_d) S_buzzer_count <= C_BUZZER_CYCLES;
-            else if(S_buzzer_count != 0) S_buzzer_count <= S_buzzer_count - 1'b1;
+            if(!S_alarm_enable) begin //【HX1P35A-移植适配】告警禁用时立即停止方波。
+                S_buzzer_count <= 27'd0; //【HX1P35A-移植适配】清除告警时长。
+                S_buzzer_tone_count <= 15'd0; //【HX1P35A-移植适配】清除音频分频计数。
+                S_buzzer_tone <= 1'b1; //【HX1P35A-移植适配】高电平关闭蜂鸣器。
+            end else begin //【HX1P35A-移植适配】告警使能时生成目标出现沿和音频方波。
+                if(S_target_found && !S_target_found_d) S_buzzer_count <= C_BUZZER_CYCLES; //【HX1P35A-移植适配】目标首次出现后播放约 1s。
+                else if(S_buzzer_count != 0) S_buzzer_count <= S_buzzer_count - 1'b1; //【HX1P35A-移植适配】告警时长倒计时。
+                if((S_target_found && !S_target_found_d) || (S_buzzer_count != 0)) begin //【HX1P35A-移植适配】告警启动或进行中时连续产生音频。
+                    if(S_buzzer_tone_count == C_BUZZER_HALF_PERIOD-1'b1) begin //【HX1P35A-移植适配】每半个音频周期翻转一次输出。
+                        S_buzzer_tone_count <= 15'd0; //【HX1P35A-移植适配】开始下一个半周期。
+                        S_buzzer_tone <= ~S_buzzer_tone; //【HX1P35A-移植适配】产生约 50% 占空比方波。
+                    end else S_buzzer_tone_count <= S_buzzer_tone_count + 1'b1; //【HX1P35A-移植适配】累计音频半周期。
+                end else begin //【HX1P35A-移植适配】没有告警时恢复安静状态。
+                    S_buzzer_tone_count <= 15'd0; //【HX1P35A-移植适配】为下一次告警从完整周期开始。
+                    S_buzzer_tone <= 1'b1; //【HX1P35A-移植适配】高电平关闭三极管。
+                end
+            end
         end
     end
 

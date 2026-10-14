@@ -44,7 +44,7 @@
 ## 本地检查记录（2026-10-08）
 
 * 已复制的 `reference_edge_project` 含 93 个 Verilog 文件与完整 Tang Dynasty 项目文件；已有实现产物为 `td_project/camera_to_dsi_display_Runs/phy_1/camera_to_dsi_display.bit`。
-* 2026-10-14 已使用本机安路 TD 6.2.168116 完成综合、布局布线和位流生成；绿色包装识别优化版本最终 setup WNS `0.134 ns`、hold WNS `0.020 ns`、0 个违规端点。
+* 2026-10-14 已使用本机安路 TD 6.2.168116 完成综合、布局布线和位流生成；蜂鸣器方波驱动版本最终 setup WNS `0.348 ns`、hold WNS `0.020 ns`、0 个违规端点。
 * SC520、视觉处理源码、管脚与时序约束均已加入 `.al` 工程；最新标准位流位于 `td_project/camera_to_dsi_display_Runs/phy_1/camera_to_dsi_display.bit`，仍需烧录后进行摄像头实拍确认。
 # 当前已接入的可运行功能
 
@@ -55,7 +55,7 @@
 - 全画面亮度抽样闭环自动曝光：过暗时先增加曝光时间、到上限后增加增益，过亮时反向调整，并设置亮度死区和 16 帧调节间隔以减少闪烁；
 - 自动曝光加入高光保护：接近饱和的采样区域超过约 3% 时，即使全局平均亮度偏暗也会优先降低增益/曝光，减轻灯具和中间反光区域过曝；
 - HDMI 画面目标框与状态条 OSD；目标框仅在 COLOR 模式显示，避免干扰 RAW、GRAY 和 SOBEL 观察；
-- 目标首次出现时驱动板载低有效蜂鸣器 `C12` 短鸣约 200 ms；
+- 目标首次出现时仿照板载初始音乐工程，在 `C12` 输出约 2 kHz 方波并告警约 1 秒，适配板载无源蜂鸣器；
 - 保留并接入从旧工程剥离的 RGB↔YUV 定点转换公式。
 
 新增 RTL 位于 `reference_edge_project/user_source/hdl_source/hx1p35_port/`。板载 KEY2（A9）已加入同步与约 10 ms 消抖，每按一次按 `原图 → 灰度 → 彩色目标高亮 → Sobel` 循环；板载 KEY3（B9）每按一次按 `AUTO → EXP:0 → EXP:1 → EXP:2 → EXP:3 → AUTO` 循环；板载 KEY1（D5）用作低有效系统复位。上电默认自动曝光，HDMI 左上角显示 `EXP:A`；手动档中 `EXP:3` 用于暗光。蜂鸣器使用 C12，是否发声由板载 SW5 控制。原参考约束占用的以太网 TX_EN/R10 和 TXD0/R11 已释放。这些功能均不依赖 Xilinx IP；必须在安路 TD 中打开 `td_project/camera_to_dsi_display.al` 后，以该工程的 IP 和约束完成综合、布局布线与下载验证。
