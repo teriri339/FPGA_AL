@@ -58,10 +58,21 @@ module hx_vision_pipeline #(
     wire edge_above = (pix_x < IMAGE_WIDTH) ? edge_line[pix_x] : 1'b0; //【HX1P35A-移植适配】上一行同列边缘。
     wire edge_pixel = raw_edge_pixel && (((pix_x != 0) && edge_left) || edge_above || ((pix_x != 0) && edge_above_left)); //【HX1P35A-移植适配】保留连续水平、垂直和斜向边缘，过滤孤立白点。
 
-    //【HX1P35A-移植适配】暗光下采用较低亮度门限和 9 位通道差比较，兼顾实拍颜色与抗噪声能力。
-    wire red_hit = (I_rgb[23:16] > 8'd80) && ({1'b0,I_rgb[23:16]} > ({1'b0,I_rgb[15:8]} + 9'd24)) && ({1'b0,I_rgb[23:16]} > ({1'b0,I_rgb[7:0]} + 9'd24)); //【HX1P35A-移植适配】放宽红色检测。
-    wire green_hit = (I_rgb[15:8] > 8'd80) && ({1'b0,I_rgb[15:8]} > ({1'b0,I_rgb[23:16]} + 9'd24)) && ({1'b0,I_rgb[15:8]} > ({1'b0,I_rgb[7:0]} + 9'd24)); //【HX1P35A-移植适配】放宽绿色检测。
-    wire blue_hit = (I_rgb[7:0] > 8'd80) && ({1'b0,I_rgb[7:0]} > ({1'b0,I_rgb[23:16]} + 9'd24)) && ({1'b0,I_rgb[7:0]} > ({1'b0,I_rgb[15:8]} + 9'd24)); //【HX1P35A-移植适配】放宽蓝色检测。
+    //【HX1P35A-移植适配】先用亮度与通道差筛选颜色候选，再用同色邻域一致性抑制暗光 Bayer/增益噪点。
+    wire raw_red_hit = (I_rgb[23:16] >= 8'd96) && ({1'b0,I_rgb[23:16]} >= ({1'b0,I_rgb[15:8]} + 9'd40)) && ({1'b0,I_rgb[23:16]} >= ({1'b0,I_rgb[7:0]} + 9'd40)); //【HX1P35A-移植适配】红色候选需具备足够亮度和饱和度。
+    wire raw_green_hit = (I_rgb[15:8] >= 8'd96) && ({1'b0,I_rgb[15:8]} >= ({1'b0,I_rgb[23:16]} + 9'd40)) && ({1'b0,I_rgb[15:8]} >= ({1'b0,I_rgb[7:0]} + 9'd40)); //【HX1P35A-移植适配】提高绿色色差门槛，排除暗部绿色通道尖峰。
+    wire raw_blue_hit = (I_rgb[7:0] >= 8'd96) && ({1'b0,I_rgb[7:0]} >= ({1'b0,I_rgb[23:16]} + 9'd40)) && ({1'b0,I_rgb[7:0]} >= ({1'b0,I_rgb[15:8]} + 9'd40)); //【HX1P35A-移植适配】蓝色候选需具备足够亮度和饱和度。
+    wire [1:0] raw_color = raw_red_hit ? 2'd1 : raw_green_hit ? 2'd2 : raw_blue_hit ? 2'd3 : 2'd0; //【HX1P35A-移植适配】将三色候选编码后共用一套行邻域滤波器。
+    reg [1:0] color_line [0:IMAGE_WIDTH-1]; //【HX1P35A-移植适配】保存上一行原始颜色候选，用于排除孤立色噪点。
+    reg [1:0] color_left, color_above_left; //【HX1P35A-移植适配】保存当前行左邻及上一行左上邻的原始颜色。
+    wire [1:0] color_above = ((pix_y != 0) && (pix_x < IMAGE_WIDTH)) ? color_line[pix_x] : 2'd0; //【HX1P35A-移植适配】首行不引用上一帧残留行缓存。
+    wire color_match_left = (pix_x != 0) && (raw_color != 0) && (raw_color == color_left); //【HX1P35A-移植适配】当前颜色与左邻一致。
+    wire color_match_above = (raw_color != 0) && (raw_color == color_above); //【HX1P35A-移植适配】当前颜色与上邻一致。
+    wire color_match_above_left = (pix_x != 0) && (pix_y != 0) && (raw_color != 0) && (raw_color == color_above_left); //【HX1P35A-移植适配】当前颜色与左上邻一致。
+    wire color_coherent = (color_match_left && color_match_above) || (color_match_left && color_match_above_left) || (color_match_above && color_match_above_left); //【HX1P35A-移植适配】三个已到达邻居中至少两个同色才确认目标像素。
+    wire red_hit = I_de && color_coherent && (raw_color == 2'd1); //【HX1P35A-移植适配】仅连续成片的红色像素进入显示、统计和告警。
+    wire green_hit = I_de && color_coherent && (raw_color == 2'd2); //【HX1P35A-移植适配】仅连续成片的绿色像素进入显示、统计和告警。
+    wire blue_hit = I_de && color_coherent && (raw_color == 2'd3); //【HX1P35A-移植适配】仅连续成片的蓝色像素进入显示、统计和告警。
     wire target_hit = I_de && (red_hit || green_hit || blue_hit);
     wire [23:0] target_mask_rgb = red_hit ? 24'hff0000 : green_hit ? 24'h00ff00 : blue_hit ? 24'h0000ff : 24'h000000;
     wire [23:0] dim_rgb = {1'b0,I_rgb[23:17],1'b0,I_rgb[15:9],1'b0,I_rgb[7:1]}; //【HX1P35A-移植适配】保留半亮原图作为 COLOR 背景。
@@ -251,6 +262,7 @@ module hx_vision_pipeline #(
             x <= 0; y <= 0;
             top_d2 <= 0; top_d1 <= 0; mid_d2 <= 0; mid_d1 <= 0; bot_d2 <= 0; bot_d1 <= 0;
             edge_left <= 0; edge_above_left <= 0; //【HX1P35A-移植适配】复位 Sobel 相邻一致性状态。
+            color_left <= 0; color_above_left <= 0; //【HX1P35A-移植适配】复位颜色邻域一致性状态。
             cur_count <= 0; cur_red_count <= 0; cur_green_count <= 0; cur_blue_count <= 0;
             cur_xmin <= 11'd2047; cur_ymin <= 11'd2047; cur_xmax <= 0; cur_ymax <= 0;
             box_xmin <= 0; box_ymin <= 0; box_xmax <= 0; box_ymax <= 0; box_color <= 0;
@@ -285,6 +297,9 @@ module hx_vision_pipeline #(
                 edge_line[pix_x] <= raw_edge_pixel; //【HX1P35A-移植适配】写入本行原始边缘，供下一行一致性判断。
                 edge_left <= raw_edge_pixel; //【HX1P35A-移植适配】保存当前边缘供下一像素水平连续性判断。
                 edge_above_left <= (pix_x == 0) ? 1'b0 : edge_above; //【HX1P35A-移植适配】保存左上邻边缘，保留斜线。
+                color_line[pix_x] <= raw_color; //【HX1P35A-移植适配】写入本行原始颜色候选，供下一行空间一致性判断。
+                color_left <= raw_color; //【HX1P35A-移植适配】保存当前候选供下一像素水平邻域判断。
+                color_above_left <= (pix_x == 0) ? 2'd0 : color_above; //【HX1P35A-移植适配】保存尚未被覆盖的上一行左上颜色。
                 gray_line2[pix_x] <= gray_line1[pix_x];
                 gray_line1[pix_x] <= gray;
                 if (pix_x == 0) begin
