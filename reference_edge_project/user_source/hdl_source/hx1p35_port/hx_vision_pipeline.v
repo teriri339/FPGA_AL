@@ -8,7 +8,10 @@ module hx_vision_pipeline #(
     parameter SOBEL_THRESHOLD_BRIGHT = 12'd112, //【HX1P35A-移植适配】明亮场景弱边缘门限，保留设备和座椅轮廓。
     parameter SOBEL_STRONG_THRESHOLD_DARK = 12'd96, //【HX1P35A-移植适配】暗光强边缘门限，抑制增益造成的连续细碎噪声。
     parameter SOBEL_STRONG_THRESHOLD_NORMAL = 12'd128, //【HX1P35A-移植适配】普通室内场景适度放宽强边缘门限，补回暗部主体轮廓。
-    parameter SOBEL_STRONG_THRESHOLD_BRIGHT = 12'd192 //【HX1P35A-移植适配】明亮场景提高强边缘门限，压制高频纹理。
+    parameter SOBEL_STRONG_THRESHOLD_BRIGHT = 12'd192, //【HX1P35A-移植适配】明亮场景提高强边缘门限，压制高频纹理。
+    parameter SOBEL_DETAIL_THRESHOLD_DARK = 12'd128, //【HX1P35A-移植适配】暗光下保留高置信度的非极大值邻边，增强纹理轮廓。
+    parameter SOBEL_DETAIL_THRESHOLD_NORMAL = 12'd176, //【HX1P35A-移植适配】普通照明强细节补偿门限，兼顾线条厚度与噪点。
+    parameter SOBEL_DETAIL_THRESHOLD_BRIGHT = 12'd256 //【HX1P35A-移植适配】明亮场景提高细节门限，避免高频背景铺满画面。
 ) (
     input wire I_clk, input wire I_rst_n,
     input wire I_vsync, input wire I_hsync, input wire I_de,
@@ -71,6 +74,8 @@ module hx_vision_pipeline #(
                                   (O_frame_luma < 8'd145) ? SOBEL_THRESHOLD_NORMAL : SOBEL_THRESHOLD_BRIGHT; //【HX1P35A-移植适配】依据上一帧全局亮度自适应门限。
     wire [11:0] sobel_strong_threshold = (O_frame_luma < 8'd72) ? SOBEL_STRONG_THRESHOLD_DARK :
                                          (O_frame_luma < 8'd145) ? SOBEL_STRONG_THRESHOLD_NORMAL : SOBEL_STRONG_THRESHOLD_BRIGHT; //【HX1P35A-移植适配】强门限随亮度联动，为弱轮廓提供可靠连接锚点。
+    wire [11:0] sobel_detail_threshold = (O_frame_luma < 8'd72) ? SOBEL_DETAIL_THRESHOLD_DARK :
+                                         (O_frame_luma < 8'd145) ? SOBEL_DETAIL_THRESHOLD_NORMAL : SOBEL_DETAIL_THRESHOLD_BRIGHT; //【HX1P35A-移植适配】独立高门限补回 NMS 削掉的强轮廓邻边。
     wire gx_dominant = {1'b0,gx_abs} >= ({1'b0,gy_abs} << 1); //【HX1P35A-移植适配】梯度接近水平方向，局部峰值沿左右比较。
     wire gy_dominant = {1'b0,gy_abs} >= ({1'b0,gx_abs} << 1); //【HX1P35A-移植适配】梯度接近垂直方向，局部峰值沿上下比较。
     wire gx_positive = (gx_pos >= gx_neg); //【HX1P35A-移植适配】保留 Gx 符号以区分两种对角方向。
@@ -107,6 +112,17 @@ module hx_vision_pipeline #(
     wire bridge_above = (gaussian_x_q < IMAGE_WIDTH) ? bridge_line[gaussian_x_q] : 1'b0; //【HX1P35A-移植适配】读取上一行同列边缘种子。
     wire weak_connected_to_seed = ((gaussian_x_q != 0) && bridge_left) || bridge_above || ((gaussian_x_q != 0) && bridge_above_left); //【HX1P35A-移植适配】允许弱边缘在种子周围再延伸一个像素。
     wire edge_pixel = edge_seed || (weak_edge_pixel && weak_connected_to_seed); //【HX1P35A-移植适配】补齐短断点但不回写最终结果，阻止弱纹理无限传播。
+    wire detail_edge_pixel = nms_valid && (mag_mid_d1 >= sobel_detail_threshold); //【HX1P35A-移植适配】对足够强的梯度取消局部极大值限制，恢复参考效果中的粗亮细节。
+    wire edge_core = edge_pixel || detail_edge_pixel; //【HX1P35A-移植适配】融合细化主轮廓与高置信度强细节。
+    reg edge_core_q, edge_core_de_q; //【HX1P35A-移植适配】融合边缘增加一级寄存，切断梯度比较到 HDMI 输出的长组合路径。
+    reg [10:0] edge_x_q; //【HX1P35A-移植适配】保存融合边缘对应横坐标，驱动后级加粗行缓存。
+    reg edge_dilate_line [0:IMAGE_WIDTH-1]; //【HX1P35A-移植适配】保存上一行融合边缘，用于低成本 2x2 形态学膨胀。
+    reg edge_dilate_left, edge_dilate_above_left; //【HX1P35A-移植适配】保存左邻和左上邻边缘，提升 HDMI 上的线条可见度。
+    wire edge_dilate_above = (edge_x_q < IMAGE_WIDTH) ? edge_dilate_line[edge_x_q] : 1'b0; //【HX1P35A-移植适配】读取上一行同列融合边缘。
+    wire edge_display_pixel = edge_core_q ||
+                              ((edge_x_q != 0) && edge_dilate_left) ||
+                              edge_dilate_above ||
+                              ((edge_x_q != 0) && edge_dilate_above_left); //【HX1P35A-移植适配】边缘向右、向下各扩展一像素，接近参考画面的粗亮轮廓。
 
     //【HX1P35A-移植适配】先用亮度与通道差筛选颜色候选，再用同色邻域一致性抑制暗光 Bayer/增益噪点。
     wire raw_red_hit = (I_rgb[23:16] >= 8'd96) && ({1'b0,I_rgb[23:16]} >= ({1'b0,I_rgb[15:8]} + 9'd40)) && ({1'b0,I_rgb[23:16]} >= ({1'b0,I_rgb[7:0]} + 9'd40)); //【HX1P35A-移植适配】红色候选需具备足够亮度和饱和度。
@@ -296,7 +312,7 @@ module hx_vision_pipeline #(
         case(I_mode)
             2'd1: base_rgb = {gray,gray,gray};
             2'd2: base_rgb = color_overlay_rgb; //【HX1P35A-移植适配】COLOR 不再因未命中目标而整屏全黑。
-            2'd3: base_rgb = edge_pixel ? 24'hffffff : 24'h000000;
+            2'd3: base_rgb = edge_display_pixel ? 24'hffffff : 24'h000000; //【HX1P35A-移植适配】Canny 输出使用强细节补偿和 2x2 加粗后的边缘。
             default: base_rgb = I_rgb;
         endcase
     end
@@ -318,6 +334,8 @@ module hx_vision_pipeline #(
             dir_mid_d2 <= 0; dir_mid_d1 <= 0; //【HX1P35A-移植适配】复位局部极大值方向窗口。
             strong_left <= 0; strong_above_left <= 0; //【HX1P35A-移植适配】复位 Sobel 双阈值连接状态。
             bridge_left <= 0; bridge_above_left <= 0; //【HX1P35A-移植适配】复位单像素断点连接状态。
+            edge_core_q <= 0; edge_core_de_q <= 0; edge_x_q <= 0; //【HX1P35A-移植适配】复位强细节补偿流水级。
+            edge_dilate_left <= 0; edge_dilate_above_left <= 0; //【HX1P35A-移植适配】复位边缘加粗邻域状态。
             color_left <= 0; color_above_left <= 0; //【HX1P35A-移植适配】复位颜色邻域一致性状态。
             cur_count <= 0; cur_red_count <= 0; cur_green_count <= 0; cur_blue_count <= 0;
             cur_xmin <= 11'd2047; cur_ymin <= 11'd2047; cur_xmax <= 0; cur_ymax <= 0;
@@ -339,6 +357,11 @@ module hx_vision_pipeline #(
             O_rgb <= stage_de ? overlay_rgb : 24'h000000;
 
             gaussian_de_q <= I_de; //【HX1P35A-移植适配】Gaussian 输出有效标志延迟一级以切断长组合路径。
+            edge_core_de_q <= gaussian_de_q; //【HX1P35A-移植适配】边缘融合有效信号随结果再延迟一级。
+            if (gaussian_de_q) begin
+                edge_core_q <= edge_core; //【HX1P35A-移植适配】寄存融合边缘，保证 HDMI 像素时序。
+                edge_x_q <= gaussian_x_q; //【HX1P35A-移植适配】坐标与寄存后的融合边缘保持同拍。
+            end
             if (I_de) begin
                 gaussian_gray_q <= gaussian_gray; //【HX1P35A-移植适配】寄存平滑结果后再进入 Sobel。
                 gaussian_x_q <= pix_x; gaussian_y_q <= pix_y; //【HX1P35A-移植适配】锁存与平滑结果对应的坐标。
@@ -401,6 +424,12 @@ module hx_vision_pipeline #(
                     mag_bot_d2 <= mag_bot_d1; mag_bot_d1 <= sobel_mag; //【HX1P35A-移植适配】幅值窗口下行水平滑动。
                     dir_mid_d2 <= dir_mid_d1; dir_mid_d1 <= dir_mid_right; //【HX1P35A-移植适配】方向窗口水平滑动。
                 end
+            end
+
+            if (edge_core_de_q && (edge_x_q < IMAGE_WIDTH)) begin
+                edge_dilate_line[edge_x_q] <= edge_core_q; //【HX1P35A-移植适配】写入寄存后的融合边缘供下一行加粗。
+                edge_dilate_left <= edge_core_q; //【HX1P35A-移植适配】保存寄存后的融合边缘供下一像素水平加粗。
+                edge_dilate_above_left <= (edge_x_q == 0) ? 1'b0 : edge_dilate_above; //【HX1P35A-移植适配】保存上一行左上边缘供斜向加粗。
             end
 
             if (frame_start) begin
