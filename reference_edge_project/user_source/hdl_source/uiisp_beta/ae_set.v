@@ -38,6 +38,7 @@ input wire [3:0]I_btn,
 input wire I_auto_enable, //【HX1P35A-移植适配】1：根据画面亮度自动曝光；0：使用 KEY3 手动档位。
 input wire [1:0] I_manual_exposure_level, //【HX1P35A-移植适配】手动 EXP0~3 档位。
 input wire [7:0] I_frame_luma, //【HX1P35A-移植适配】视频域输出的全帧平均亮度。
+input wire [11:0] I_frame_highlights, //【HX1P35A-移植适配】接近饱和的高光样点数量。
 input wire I_frame_luma_toggle, //【HX1P35A-移植适配】每帧翻转一次的亮度更新标志。
 input wire I_ae_cfg_done,
 input wire I_cam_cfg_done,
@@ -52,6 +53,7 @@ reg r_auto_prev = 0; //【HX1P35A-移植适配】同步后自动曝光状态的�
 (* async_reg = "true" *) reg [1:0] r_manual_meta = 2'd2, r_manual_sync = 2'd2; //【HX1P35A-移植适配】手动档位两级同步器。
 reg [1:0] r_manual_prev = 2'd2; //【HX1P35A-移植适配】同步后手动档位变化检测。
 (* async_reg = "true" *) reg [7:0] r_luma_meta = 0, r_luma_sync = 0; //【HX1P35A-移植适配】帧平均亮度两级同步器。
+(* async_reg = "true" *) reg [11:0] r_highlight_meta = 0, r_highlight_sync = 0; //【HX1P35A-移植适配】帧高光计数两级同步器。
 (* async_reg = "true" *) reg [2:0] r_luma_toggle_sync = 0; //【HX1P35A-移植适配】三级同步用于可靠检测新帧。
 wire w_new_luma = r_luma_toggle_sync[2] ^ r_luma_toggle_sync[1]; //【HX1P35A-移植适配】新亮度数据单周期脉冲。
 
@@ -59,11 +61,12 @@ always @(posedge I_clk or posedge I_rst) begin
 	if(I_rst) begin
 		r_auto_meta <= 0; r_auto_sync <= 0; //【HX1P35A-移植适配】复位跨域同步链。
 		r_manual_meta <= 2'd2; r_manual_sync <= 2'd2; //【HX1P35A-移植适配】默认手动档 2。
-		r_luma_meta <= 0; r_luma_sync <= 0; r_luma_toggle_sync <= 0; //【HX1P35A-移植适配】复位亮度跨域同步链。
+		r_luma_meta <= 0; r_luma_sync <= 0; r_highlight_meta <= 0; r_highlight_sync <= 0; r_luma_toggle_sync <= 0; //【HX1P35A-移植适配】复位亮度和高光跨域同步链。
 	end else begin
 		r_auto_meta <= I_auto_enable; r_auto_sync <= r_auto_meta; //【HX1P35A-移植适配】同步自动曝光使能。
 		r_manual_meta <= I_manual_exposure_level; r_manual_sync <= r_manual_meta; //【HX1P35A-移植适配】同步手动档位。
 		r_luma_meta <= I_frame_luma; r_luma_sync <= r_luma_meta; //【HX1P35A-移植适配】同步稳定的帧亮度值。
+		r_highlight_meta <= I_frame_highlights; r_highlight_sync <= r_highlight_meta; //【HX1P35A-移植适配】同步稳定的帧高光面积。
 		r_luma_toggle_sync <= {r_luma_toggle_sync[1:0],I_frame_luma_toggle}; //【HX1P35A-移植适配】同步亮度更新翻转标志。
 	end
 end
@@ -71,8 +74,11 @@ end
 //【HX1P35A-移植适配】720p60 VTS=1000，曝光使用半行单位，1990 接近合法上限；增益控制范围 16~176。
 localparam [7:0] C_LUMA_DARK = 8'd72; //【HX1P35A-移植适配】低于此值逐步增亮。
 localparam [7:0] C_LUMA_BRIGHT = 8'd145; //【HX1P35A-移植适配】高于此值逐步变暗，中间形成防抖死区。
+localparam [11:0] C_HIGHLIGHT_LIMIT = 12'd108; //【HX1P35A-移植适配】3600 个样点约 3% 接近饱和时启动高光保护。
 reg [3:0] r_auto_frame_count = 0; //【HX1P35A-移植适配】每 16 帧最多调整一次，等待传感器和 DDR 画面稳定。
 reg [15:0] r_ae_set = 1990, r_ag_set = 80; //【HX1P35A-移植适配】自动曝光目标快门和增益。
+wire w_highlight_over = (r_highlight_sync >= C_HIGHLIGHT_LIMIT); //【HX1P35A-移植适配】局部灯具或反光区域过曝标志。
+wire w_adjust_now = (r_auto_frame_count == 4'hf) || (w_highlight_over && (r_auto_frame_count[2:0] == 3'h7)); //【HX1P35A-移植适配】高光过曝时以 8 帧间隔更快收敛。
 
 always @(posedge I_clk or posedge I_rst) begin
 	if(I_rst) begin
@@ -93,18 +99,18 @@ always @(posedge I_clk or posedge I_rst) begin
 		end else if (!r_auto_prev) begin
 			r_auto_frame_count <= 0; //【HX1P35A-移植适配】进入 AUTO 后先等待 16 帧再判断，避免沿用旧画面。
 		end else if (w_new_luma) begin
-			if (r_auto_frame_count != 4'hf) begin
+			if (!w_adjust_now) begin
 				r_auto_frame_count <= r_auto_frame_count + 1'b1; //【HX1P35A-移植适配】降低调节频率，抑制闪烁。
 			end else begin
-				r_auto_frame_count <= 0; //【HX1P35A-移植适配】约 0.27 秒执行一次闭环调整。
-				if (r_luma_sync < C_LUMA_DARK) begin
+				r_auto_frame_count <= 0; //【HX1P35A-移植适配】普通场景约 0.27 秒、高光过曝约 0.13 秒调整一次。
+				if ((r_luma_sync < C_LUMA_DARK) && !w_highlight_over) begin
 					if (r_ae_set < 16'd1990)
 						r_ae_set <= (r_ae_set > 16'd1830) ? 16'd1990 : r_ae_set + 16'd160; //【HX1P35A-移植适配】暗时先延长曝光。
 					else if (r_ag_set < 16'd176)
 						r_ag_set <= (r_ag_set > 16'd168) ? 16'd176 : r_ag_set + 16'd8; //【HX1P35A-移植适配】曝光到顶后逐级增加增益。
-				end else if (r_luma_sync > C_LUMA_BRIGHT) begin
+				end else if (w_highlight_over || (r_luma_sync > C_LUMA_BRIGHT)) begin
 					if (r_ag_set > 16'd16)
-						r_ag_set <= (r_ag_set < 16'd24) ? 16'd16 : r_ag_set - 16'd8; //【HX1P35A-移植适配】过亮时先降低噪声更大的增益。
+						r_ag_set <= (r_ag_set < 16'd24) ? 16'd16 : r_ag_set - 16'd8; //【HX1P35A-移植适配】全局过亮或局部过曝时先降低增益。
 					else if (r_ae_set > 16'd300)
 						r_ae_set <= (r_ae_set < 16'd460) ? 16'd300 : r_ae_set - 16'd160; //【HX1P35A-移植适配】最低增益后再缩短曝光。
 				end

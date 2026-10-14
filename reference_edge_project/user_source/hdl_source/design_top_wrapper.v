@@ -173,6 +173,7 @@ module design_top_wrapper (
     wire[1:0]   S_exposure_level; //【HX1P35A-移植适配】KEY3 选择的手动曝光档位（HDMI 像素时钟域）。
     wire        S_auto_exposure; //【HX1P35A-移植适配】自动曝光模式，上电默认开启。
     wire[7:0]   S_frame_luma; //【HX1P35A-移植适配】视频帧全局平均亮度。
+    wire[11:0]  S_frame_highlights; //【HX1P35A-移植适配】视频帧接近饱和的高光样点数量。
     wire        S_frame_luma_toggle; //【HX1P35A-移植适配】视频帧亮度更新翻转标志。
     wire        S_alarm_enable; //【HX1P35A-移植适配】目标告警逻辑保持使能，蜂鸣器声音由板载 SW5 硬件开关控制。
     reg         S_target_found_d; //【HX1P35A-移植适配】检测目标出现沿，避免蜂鸣器持续鸣叫。
@@ -493,6 +494,7 @@ module design_top_wrapper (
       .I_auto_enable(S_auto_exposure), //【HX1P35A-移植适配】自动/手动曝光状态在 ae_set 内同步到 24 MHz 域。
       .I_manual_exposure_level(S_exposure_level), //【HX1P35A-移植适配】自动关闭时使用 KEY3 选择的固定档位。
       .I_frame_luma(S_frame_luma), //【HX1P35A-移植适配】来自 HDMI 像素域的帧平均亮度。
+      .I_frame_highlights(S_frame_highlights), //【HX1P35A-移植适配】高光面积用于避免灯具和反光区域过曝。
       .I_frame_luma_toggle(S_frame_luma_toggle), //【HX1P35A-移植适配】跨域帧亮度更新标志。
       .I_cam_cfg_done(S_cam_cfg_done),
       .I_ae_cfg_done(S_ae_cfg_done),
@@ -742,7 +744,7 @@ isp_top u_isp_top (
         .O_vsync(S_vision_vsync), .O_hsync(S_vision_hsync), .O_de(S_vision_de),
         .O_user(S_vision_user), .O_last(S_vision_last), .O_rgb(S_vision_rgb),
         .O_target_found(S_target_found), .O_target_pixels(S_target_pixels),
-        .O_frame_luma(S_frame_luma), .O_frame_luma_toggle(S_frame_luma_toggle) //【HX1P35A-移植适配】闭环自动曝光亮度反馈。
+        .O_frame_luma(S_frame_luma), .O_frame_highlights(S_frame_highlights), .O_frame_luma_toggle(S_frame_luma_toggle) //【HX1P35A-移植适配】闭环自动曝光亮度与高光反馈。
     );
 
 
