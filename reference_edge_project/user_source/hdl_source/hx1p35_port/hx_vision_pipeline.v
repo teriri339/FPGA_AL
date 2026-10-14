@@ -7,7 +7,7 @@ module hx_vision_pipeline #(
     parameter SOBEL_THRESHOLD_NORMAL = 12'd80, //【HX1P35A-移植适配】普通室内照明兼顾文字细线与背景噪声。
     parameter SOBEL_THRESHOLD_BRIGHT = 12'd112, //【HX1P35A-移植适配】明亮场景弱边缘门限，保留设备和座椅轮廓。
     parameter SOBEL_STRONG_THRESHOLD_DARK = 12'd96, //【HX1P35A-移植适配】暗光强边缘门限，抑制增益造成的连续细碎噪声。
-    parameter SOBEL_STRONG_THRESHOLD_NORMAL = 12'd144, //【HX1P35A-移植适配】普通室内场景仅以明显梯度作为弱轮廓连接锚点。
+    parameter SOBEL_STRONG_THRESHOLD_NORMAL = 12'd128, //【HX1P35A-移植适配】普通室内场景适度放宽强边缘门限，补回暗部主体轮廓。
     parameter SOBEL_STRONG_THRESHOLD_BRIGHT = 12'd192 //【HX1P35A-移植适配】明亮场景提高强边缘门限，压制高频纹理。
 ) (
     input wire I_clk, input wire I_rst_n,
@@ -101,7 +101,12 @@ module hx_vision_pipeline #(
     reg strong_left, strong_above_left; //【HX1P35A-移植适配】当前行左邻和上一行左上邻强边缘状态。
     wire strong_above = (gaussian_x_q < IMAGE_WIDTH) ? strong_line[gaussian_x_q] : 1'b0; //【HX1P35A-移植适配】按流水坐标读取上一行同列强边缘。
     wire weak_connected_to_strong = ((gaussian_x_q != 0) && strong_left) || strong_above || ((gaussian_x_q != 0) && strong_above_left); //【HX1P35A-移植适配】弱边缘必须邻接强边缘，避免纹理链自行延伸。
-    wire edge_pixel = strong_edge_pixel || (weak_edge_pixel && weak_connected_to_strong); //【HX1P35A-移植适配】单遍双阈值滞后筛选：保留主体轮廓，压制连续细碎纹理。
+    wire edge_seed = strong_edge_pixel || (weak_edge_pixel && weak_connected_to_strong); //【HX1P35A-移植适配】第一步只接受强边缘及其直接相邻弱边缘。
+    reg bridge_line [0:IMAGE_WIDTH-1]; //【HX1P35A-移植适配】保存第一步边缘种子，仅供一次受控断点连接。
+    reg bridge_left, bridge_above_left; //【HX1P35A-移植适配】保存边缘种子的左邻与左上邻状态。
+    wire bridge_above = (gaussian_x_q < IMAGE_WIDTH) ? bridge_line[gaussian_x_q] : 1'b0; //【HX1P35A-移植适配】读取上一行同列边缘种子。
+    wire weak_connected_to_seed = ((gaussian_x_q != 0) && bridge_left) || bridge_above || ((gaussian_x_q != 0) && bridge_above_left); //【HX1P35A-移植适配】允许弱边缘在种子周围再延伸一个像素。
+    wire edge_pixel = edge_seed || (weak_edge_pixel && weak_connected_to_seed); //【HX1P35A-移植适配】补齐短断点但不回写最终结果，阻止弱纹理无限传播。
 
     //【HX1P35A-移植适配】先用亮度与通道差筛选颜色候选，再用同色邻域一致性抑制暗光 Bayer/增益噪点。
     wire raw_red_hit = (I_rgb[23:16] >= 8'd96) && ({1'b0,I_rgb[23:16]} >= ({1'b0,I_rgb[15:8]} + 9'd40)) && ({1'b0,I_rgb[23:16]} >= ({1'b0,I_rgb[7:0]} + 9'd40)); //【HX1P35A-移植适配】红色候选需具备足够亮度和饱和度。
@@ -312,6 +317,7 @@ module hx_vision_pipeline #(
             mag_top_d2 <= 0; mag_top_d1 <= 0; mag_mid_d2 <= 0; mag_mid_d1 <= 0; mag_bot_d2 <= 0; mag_bot_d1 <= 0; //【HX1P35A-移植适配】复位 Sobel 幅值细化窗口。
             dir_mid_d2 <= 0; dir_mid_d1 <= 0; //【HX1P35A-移植适配】复位局部极大值方向窗口。
             strong_left <= 0; strong_above_left <= 0; //【HX1P35A-移植适配】复位 Sobel 双阈值连接状态。
+            bridge_left <= 0; bridge_above_left <= 0; //【HX1P35A-移植适配】复位单像素断点连接状态。
             color_left <= 0; color_above_left <= 0; //【HX1P35A-移植适配】复位颜色邻域一致性状态。
             cur_count <= 0; cur_red_count <= 0; cur_green_count <= 0; cur_blue_count <= 0;
             cur_xmin <= 11'd2047; cur_ymin <= 11'd2047; cur_xmax <= 0; cur_ymax <= 0;
@@ -370,6 +376,9 @@ module hx_vision_pipeline #(
                 strong_line[gaussian_x_q] <= strong_edge_pixel; //【HX1P35A-移植适配】写入本行强边缘，供下一行滞后连接判断。
                 strong_left <= strong_edge_pixel; //【HX1P35A-移植适配】保存当前强边缘供下一像素水平连接判断。
                 strong_above_left <= (gaussian_x_q == 0) ? 1'b0 : strong_above; //【HX1P35A-移植适配】保存左上强边缘，支持斜向轮廓。
+                bridge_line[gaussian_x_q] <= edge_seed; //【HX1P35A-移植适配】仅存第一步种子，限制断点连接深度。
+                bridge_left <= edge_seed; //【HX1P35A-移植适配】保存当前种子供下一像素连接。
+                bridge_above_left <= (gaussian_x_q == 0) ? 1'b0 : bridge_above; //【HX1P35A-移植适配】保存左上种子以补斜向短断点。
                 mag_line2[gaussian_x_q] <= mag_line1[gaussian_x_q]; //【HX1P35A-移植适配】Sobel 幅值行缓存向上两行推进。
                 mag_line1[gaussian_x_q] <= sobel_mag; //【HX1P35A-移植适配】保存当前 Sobel 幅值供下一行细化。
                 dir_line1[gaussian_x_q] <= sobel_direction; //【HX1P35A-移植适配】保存当前四方向编码供下一行峰值比较。
