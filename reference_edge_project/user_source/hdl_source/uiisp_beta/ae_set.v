@@ -72,10 +72,10 @@ always @(posedge I_clk or posedge I_rst) begin
 end
 
 //【HX1P35A-移植适配】720p60 VTS=1000，曝光使用半行单位，1990 接近合法上限；增益控制范围 16~176。
-localparam [7:0] C_LUMA_DARK = 8'd72; //【HX1P35A-移植适配】低于此值逐步增亮。
-localparam [7:0] C_LUMA_BRIGHT = 8'd145; //【HX1P35A-移植适配】高于此值逐步变暗，中间形成防抖死区。
-localparam [7:0] C_HIGHLIGHT_LUMA_MIN = 8'd88; //【HX1P35A-移植适配】全局亮度达到可视水平后才允许局部高光压低曝光，暗屋顶优先保留结构。
-localparam [11:0] C_HIGHLIGHT_LIMIT = 12'd360; //【HX1P35A-移植适配】高光面积提高到约 10%，小面积灯具不再把整幅暗场压黑。
+localparam [7:0] C_LUMA_DARK = 8'd96; //【HX1P35A-移植适配】提高自动曝光低端目标，使高反差场景中的暗墙、屋顶结构可见。
+localparam [7:0] C_LUMA_BRIGHT = 8'd160; //【HX1P35A-移植适配】扩大稳定区上沿，避免明窗出现时过早压低整幅曝光。
+localparam [7:0] C_HIGHLIGHT_LUMA_MIN = 8'd128; //【HX1P35A-移植适配】全局已经较亮后才允许大面积高光压低曝光，暗区结构优先。
+localparam [11:0] C_HIGHLIGHT_LIMIT = 12'd900; //【HX1P35A-移植适配】约 25% 抽样点接近饱和才启动保护，局部明窗或灯具允许饱和。
 reg [3:0] r_auto_frame_count = 0; //【HX1P35A-移植适配】每 16 帧最多调整一次，等待传感器和 DDR 画面稳定。
 reg [15:0] r_ae_set = 1990, r_ag_set = 80; //【HX1P35A-移植适配】自动曝光目标快门和增益。
 wire w_highlight_over = (r_highlight_sync >= C_HIGHLIGHT_LIMIT) && (r_luma_sync >= C_HIGHLIGHT_LUMA_MIN); //【HX1P35A-移植适配】仅在全局已足够亮时保护大面积高光，避免暗场只剩灯具。

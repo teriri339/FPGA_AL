@@ -3,10 +3,10 @@
 module hx_vision_pipeline #(
     parameter IMAGE_WIDTH = 1280,
     parameter MIN_TARGET_PIXELS = 24'd800,
-    parameter SOBEL_THRESHOLD_DARK = 12'd48, //【HX1P35A-移植适配】暗光弱边缘门限小幅降低，自动曝光稳定后补回屋顶接缝等低对比轮廓。
+    parameter SOBEL_THRESHOLD_DARK = 12'd44, //【HX1P35A-移植适配】暗区弱边缘门限继续小幅降低，补回墙板接缝、空调格栅等低对比结构。
     parameter SOBEL_THRESHOLD_NORMAL = 12'd72, //【HX1P35A-移植适配】普通室内照明保留文字、线缆和衣物纹理等细线。
     parameter SOBEL_THRESHOLD_BRIGHT = 12'd96, //【HX1P35A-移植适配】明亮场景适度降低弱边缘门限，减少主体轮廓断点。
-    parameter SOBEL_STRONG_THRESHOLD_DARK = 12'd88, //【HX1P35A-移植适配】暗光强边缘门限适度降低，为弱轮廓提供更多可靠锚点。
+    parameter SOBEL_STRONG_THRESHOLD_DARK = 12'd80, //【HX1P35A-移植适配】暗区强边缘门限降低，为弱轮廓提供更多可靠锚点；Gaussian 与 NMS 继续限制噪声。
     parameter SOBEL_STRONG_THRESHOLD_NORMAL = 12'd112, //【HX1P35A-移植适配】普通室内场景补回低对比主体细节，同时仍由 NMS 抑制噪声。
     parameter SOBEL_STRONG_THRESHOLD_BRIGHT = 12'd176, //【HX1P35A-移植适配】明亮场景保留细小结构，避免过低门限造成高频背景铺满。
     parameter SOBEL_DETAIL_THRESHOLD_DARK = 12'd128, //【HX1P35A-移植适配】暗光下保留高置信度的非极大值邻边，增强纹理轮廓。
@@ -70,12 +70,14 @@ module hx_vision_pipeline #(
     wire [10:0] gy_abs = (gy_pos >= gy_neg) ? (gy_pos - gy_neg) : (gy_neg - gy_pos);
     wire [11:0] sobel_mag = {1'b0,gx_abs} + {1'b0,gy_abs};
     wire sobel_valid = gaussian_de_q && (gaussian_x_q >= 11'd4) && (gaussian_y_q >= 11'd4); //【HX1P35A-移植适配】使用延迟坐标判断 Gaussian 与 Sobel 两级窗口完整。
-    wire [11:0] sobel_threshold = (O_frame_luma < 8'd72) ? SOBEL_THRESHOLD_DARK :
-                                  (O_frame_luma < 8'd145) ? SOBEL_THRESHOLD_NORMAL : SOBEL_THRESHOLD_BRIGHT; //【HX1P35A-移植适配】依据上一帧全局亮度自适应门限。
-    wire [11:0] sobel_strong_threshold = (O_frame_luma < 8'd72) ? SOBEL_STRONG_THRESHOLD_DARK :
-                                         (O_frame_luma < 8'd145) ? SOBEL_STRONG_THRESHOLD_NORMAL : SOBEL_STRONG_THRESHOLD_BRIGHT; //【HX1P35A-移植适配】强门限随亮度联动，为弱轮廓提供可靠连接锚点。
-    wire [11:0] sobel_detail_threshold = (O_frame_luma < 8'd72) ? SOBEL_DETAIL_THRESHOLD_DARK :
-                                         (O_frame_luma < 8'd145) ? SOBEL_DETAIL_THRESHOLD_NORMAL : SOBEL_DETAIL_THRESHOLD_BRIGHT; //【HX1P35A-移植适配】独立高门限补回 NMS 削掉的强轮廓邻边。
+    wire local_dark_region = (top_d2 < 8'd96); //【HX1P35A-移植适配】top_d2 与 NMS 中心梯度对齐，明窗与暗墙可分别选择门限。
+    wire local_bright_region = (top_d2 >= 8'd176); //【HX1P35A-移植适配】局部高亮区域继续使用严格门限，防止窗格和灯具周围铺满噪声。
+    wire [11:0] sobel_threshold = local_dark_region ? SOBEL_THRESHOLD_DARK :
+                                  local_bright_region ? SOBEL_THRESHOLD_BRIGHT : SOBEL_THRESHOLD_NORMAL; //【HX1P35A-移植适配】按局部而非整帧亮度选择弱门限，保留同帧暗区细节。
+    wire [11:0] sobel_strong_threshold = local_dark_region ? SOBEL_STRONG_THRESHOLD_DARK :
+                                         local_bright_region ? SOBEL_STRONG_THRESHOLD_BRIGHT : SOBEL_STRONG_THRESHOLD_NORMAL; //【HX1P35A-移植适配】局部强门限为暗墙弱轮廓提供锚点。
+    wire [11:0] sobel_detail_threshold = local_dark_region ? SOBEL_DETAIL_THRESHOLD_DARK :
+                                         local_bright_region ? SOBEL_DETAIL_THRESHOLD_BRIGHT : SOBEL_DETAIL_THRESHOLD_NORMAL; //【HX1P35A-移植适配】非 NMS 强细节也按局部亮度选择，线宽策略保持不变。
     wire gx_dominant = {1'b0,gx_abs} >= ({1'b0,gy_abs} << 1); //【HX1P35A-移植适配】梯度接近水平方向，局部峰值沿左右比较。
     wire gy_dominant = {1'b0,gy_abs} >= ({1'b0,gx_abs} << 1); //【HX1P35A-移植适配】梯度接近垂直方向，局部峰值沿上下比较。
     wire gx_positive = (gx_pos >= gx_neg); //【HX1P35A-移植适配】保留 Gx 符号以区分两种对角方向。
