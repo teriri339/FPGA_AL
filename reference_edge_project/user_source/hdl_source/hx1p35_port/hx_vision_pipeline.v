@@ -38,7 +38,7 @@ module hx_vision_pipeline #(
 
     //【HX1P35A-移植适配】每 16 行、每 16 像素取样一次；3600 个样点除以 4096 得到 0~224 的稳定亮度量。
     wire luma_sample = I_de && (pix_x[3:0] == 4'd0) && (pix_y[3:0] == 4'd0); //【HX1P35A-移植适配】覆盖整幅画面而非局部亮点。
-    wire highlight_sample = luma_sample && (gray >= 8'd235); //【HX1P35A-移植适配】统计接近 8 位饱和的高光样点。
+    wire highlight_sample = luma_sample && (gray >= 8'd245); //【HX1P35A-移植适配】只统计真正接近削顶的高光，避免把正常浅色墙面误作过曝。
     reg [19:0] frame_luma_sum; //【HX1P35A-移植适配】最大 3600*255，小于 20 位上限。
     reg [11:0] frame_highlight_count; //【HX1P35A-移植适配】3600 个样点的高光计数。
 
@@ -410,7 +410,7 @@ module hx_vision_pipeline #(
                 O_frame_highlights <= frame_highlight_count; //【HX1P35A-移植适配】锁存上一帧高光面积用于防过曝。
                 O_frame_luma_toggle <= ~O_frame_luma_toggle; //【HX1P35A-移植适配】跨域接收端据此识别新一帧统计值。
                 frame_luma_sum <= {12'd0,gray}; //【HX1P35A-移植适配】当前 (0,0) 像素作为新一帧第一个样点。
-                frame_highlight_count <= (gray >= 8'd235) ? 12'd1 : 12'd0; //【HX1P35A-移植适配】从新帧首像素重新统计高光。
+                frame_highlight_count <= (gray >= 8'd245) ? 12'd1 : 12'd0; //【HX1P35A-移植适配】从新帧首像素重新统计真正接近削顶的高光。
             end else if (luma_sample) begin
                 frame_luma_sum <= frame_luma_sum + gray; //【HX1P35A-移植适配】全画面稀疏亮度累加。
                 if (highlight_sample) frame_highlight_count <= frame_highlight_count + 1'b1; //【HX1P35A-移植适配】累计饱和区域面积。

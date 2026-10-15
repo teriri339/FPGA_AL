@@ -74,12 +74,13 @@ end
 //【HX1P35A-移植适配】720p60 VTS=1000，曝光使用半行单位，1990 接近合法上限；增益控制范围 16~176。
 localparam [7:0] C_LUMA_DARK = 8'd96; //【HX1P35A-移植适配】提高自动曝光低端目标，使高反差场景中的暗墙、屋顶结构可见。
 localparam [7:0] C_LUMA_BRIGHT = 8'd160; //【HX1P35A-移植适配】扩大稳定区上沿，避免明窗出现时过早压低整幅曝光。
-localparam [7:0] C_HIGHLIGHT_LUMA_MIN = 8'd128; //【HX1P35A-移植适配】全局已经较亮后才允许大面积高光压低曝光，暗区结构优先。
-localparam [11:0] C_HIGHLIGHT_LIMIT = 12'd900; //【HX1P35A-移植适配】约 25% 抽样点接近饱和才启动保护，局部明窗或灯具允许饱和。
+localparam [11:0] C_HIGHLIGHT_HOLD = 12'd120; //【HX1P35A-移植适配】约 3.3% 抽样点削顶后禁止继续增亮，避免灯具被推成整片纯白。
+localparam [11:0] C_HIGHLIGHT_REDUCE = 12'd300; //【HX1P35A-移植适配】约 8.3% 抽样点削顶时主动降低曝光，保住灯管和窗格内部结构。
 reg [3:0] r_auto_frame_count = 0; //【HX1P35A-移植适配】每 16 帧最多调整一次，等待传感器和 DDR 画面稳定。
 reg [15:0] r_ae_set = 1990, r_ag_set = 80; //【HX1P35A-移植适配】自动曝光目标快门和增益。
-wire w_highlight_over = (r_highlight_sync >= C_HIGHLIGHT_LIMIT) && (r_luma_sync >= C_HIGHLIGHT_LUMA_MIN); //【HX1P35A-移植适配】仅在全局已足够亮时保护大面积高光，避免暗场只剩灯具。
-wire w_adjust_now = (r_auto_frame_count == 4'hf) || (w_highlight_over && (r_auto_frame_count[2:0] == 3'h7)); //【HX1P35A-移植适配】高光过曝时以 8 帧间隔更快收敛。
+wire w_highlight_hold = (r_highlight_sync >= C_HIGHLIGHT_HOLD);
+wire w_highlight_reduce = (r_highlight_sync >= C_HIGHLIGHT_REDUCE);
+wire w_adjust_now = (r_auto_frame_count == 4'hf) || (w_highlight_reduce && (r_auto_frame_count[2:0] == 3'h7)); //【HX1P35A-移植适配】大面积削顶时以 8 帧间隔更快收敛。
 
 always @(posedge I_clk or posedge I_rst) begin
 	if(I_rst) begin
@@ -104,16 +105,18 @@ always @(posedge I_clk or posedge I_rst) begin
 				r_auto_frame_count <= r_auto_frame_count + 1'b1; //【HX1P35A-移植适配】降低调节频率，抑制闪烁。
 			end else begin
 				r_auto_frame_count <= 0; //【HX1P35A-移植适配】普通场景约 0.27 秒、高光过曝约 0.13 秒调整一次。
-				if (r_luma_sync < C_LUMA_DARK) begin //【HX1P35A-移植适配】暗场无条件优先增亮，允许灯具局部饱和以换取屋顶和墙面结构。
+				if (w_highlight_reduce || (r_luma_sync > C_LUMA_BRIGHT)) begin //【HX1P35A-移植适配】高光削顶优先级高于暗部增亮，先恢复灯管、窗格等亮区结构。
+					if (r_ag_set > 16'd16)
+						r_ag_set <= (r_ag_set < 16'd24) ? 16'd16 : r_ag_set - 16'd8; //【HX1P35A-移植适配】先降低模拟增益，减少亮区削顶和噪声。
+					else if (r_ae_set > 16'd300)
+						r_ae_set <= (r_ae_set < 16'd460) ? 16'd300 : r_ae_set - 16'd160; //【HX1P35A-移植适配】最低增益后再缩短曝光。
+				end else if (w_highlight_hold) begin
+					//【HX1P35A-移植适配】高光处于 3.3%~8.3% 平衡带时保持曝光，阻止平均亮度环再次把灯具推到过曝。
+				end else if (r_luma_sync < C_LUMA_DARK) begin
 					if (r_ae_set < 16'd1990)
 						r_ae_set <= (r_ae_set > 16'd1830) ? 16'd1990 : r_ae_set + 16'd160; //【HX1P35A-移植适配】暗时先延长曝光。
 					else if (r_ag_set < 16'd176)
 						r_ag_set <= (r_ag_set > 16'd168) ? 16'd176 : r_ag_set + 16'd8; //【HX1P35A-移植适配】曝光到顶后逐级增加增益。
-				end else if (w_highlight_over || (r_luma_sync > C_LUMA_BRIGHT)) begin
-					if (r_ag_set > 16'd16)
-						r_ag_set <= (r_ag_set < 16'd24) ? 16'd16 : r_ag_set - 16'd8; //【HX1P35A-移植适配】全局过亮或局部过曝时先降低增益。
-					else if (r_ae_set > 16'd300)
-						r_ae_set <= (r_ae_set < 16'd460) ? 16'd300 : r_ae_set - 16'd160; //【HX1P35A-移植适配】最低增益后再缩短曝光。
 				end
 			end
 		end
