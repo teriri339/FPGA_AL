@@ -15,6 +15,18 @@
 
 ## 当前候选版
 
+### candidate-20261015-structured-8neigh-hysteresis
+
+- 提交：`c21e17a`
+- 状态：候选版；完整综合、布局布线、位流生成均通过，用户已确认保留为可回退版本。
+- 主要功能：保留对称 8 邻域滞后连接，但强边仅由原强边通路输出；弱边中心必须同时满足“邻域存在强边锚点”和“八邻域至少存在两个弱候选”才被救回。
+- 效果取舍：相较无条件的一跳 8 邻域连接，可明显抑制孤立强噪点被重复加粗以及单点弱噪声，同时尽量保留人物、灯管、衣物和桌面纹理中的连续结构。
+- 工程实现：采用分组并行布尔判断邻域弱候选数量，避免串行加法器进入像素关键路径。
+- 实现结果：setup WNS `0.111 ns`、hold WNS `0.020 ns`、0 个违规端点；16029 slices（75.55%）、39 RAM、23 DSP。
+- 标准位流 SHA256：`0790354580582074891AF2821AAECFD1051E69F3F9E12140F22E7AB3F129E91D`。
+- 烧录文件：`reference_edge_project/td_project/camera_to_dsi_display_Runs/best_result/camera_to_dsi_display_20261015_noise-filtered_pre-highlight-ae.bit`。
+- 说明：该检查点不包含后续“平均亮度 + 高光保护”自动曝光试验，适合单独比较 Canny 连续性降噪效果。
+
 ### candidate-20261015-symmetric-8neigh-hysteresis
 
 - 状态：候选版；完整综合、布局布线、位流生成均通过，等待同场景实拍确认。
