@@ -24,6 +24,7 @@ module hx_vision_pipeline #(
     output reg O_target_found, output reg [23:0] O_target_pixels,
     output reg [7:0] O_frame_luma, //【HX1P35A-移植适配】整帧稀疏采样平均亮度，供自动曝光使用。
     output reg [11:0] O_frame_highlights, //【HX1P35A-移植适配】逐帧接近饱和样点数量，供自动曝光保护高光。
+    output reg [11:0] O_frame_shadows, //【HX1P35A-移植适配】逐帧深暗样点数量，防止高光保护把主体压成全黑。
     output reg O_frame_luma_toggle //【HX1P35A-移植适配】每完成一帧翻转，用于跨时钟域传递亮度。
 );
     //【HX1P35A-移植适配】坐标使用 VTC 的 user/last 标志；frame_start 当前像素固定为 (0,0)。
@@ -39,8 +40,10 @@ module hx_vision_pipeline #(
     //【HX1P35A-移植适配】每 16 行、每 16 像素取样一次；3600 个样点除以 4096 得到 0~224 的稳定亮度量。
     wire luma_sample = I_de && (pix_x[3:0] == 4'd0) && (pix_y[3:0] == 4'd0); //【HX1P35A-移植适配】覆盖整幅画面而非局部亮点。
     wire highlight_sample = luma_sample && (gray >= 8'd245); //【HX1P35A-移植适配】只统计真正接近削顶的高光，避免把正常浅色墙面误作过曝。
+    wire shadow_sample = luma_sample && (gray <= 8'd48); //【HX1P35A-移植适配】统计缺少可辨纹理的深暗区域，用于亮暗共存测光。
     reg [19:0] frame_luma_sum; //【HX1P35A-移植适配】最大 3600*255，小于 20 位上限。
     reg [11:0] frame_highlight_count; //【HX1P35A-移植适配】3600 个样点的高光计数。
+    reg [11:0] frame_shadow_count; //【HX1P35A-移植适配】3600 个样点的深暗计数。
 
     //【HX1P35A-移植适配】第一组两行缓存构成 3x3 Gaussian 窗口，先抑制传感器噪点和高频细碎纹理。
     reg [7:0] raw_gray_line1 [0:IMAGE_WIDTH-1]; //【HX1P35A-移植适配】Gaussian 原始灰度上一行缓存。
@@ -380,7 +383,7 @@ module hx_vision_pipeline #(
             box_xmin <= 0; box_ymin <= 0; box_xmax <= 0; box_ymax <= 0; box_color <= 0;
             center_x_bcd <= 0; center_y_bcd <= 0; pixel_count_bcd <= 0;
             O_target_found <= 0; O_target_pixels <= 0;
-            frame_luma_sum <= 0; frame_highlight_count <= 0; O_frame_luma <= 0; O_frame_highlights <= 0; O_frame_luma_toggle <= 0; //【HX1P35A-移植适配】复位自动曝光亮度及高光统计。
+            frame_luma_sum <= 0; frame_highlight_count <= 0; frame_shadow_count <= 0; O_frame_luma <= 0; O_frame_highlights <= 0; O_frame_shadows <= 0; O_frame_luma_toggle <= 0; //【HX1P35A-移植适配】复位自动曝光亮度、高光及暗部统计。
             stage_vsync <= 0; stage_hsync <= 0; stage_de <= 0; stage_user <= 0; stage_last <= 0;
             stage_rgb <= 0; draw_x <= 0; draw_y <= 0;
             O_vsync <= 0; O_hsync <= 0; O_de <= 0; O_user <= 0; O_last <= 0; O_rgb <= 0;
@@ -408,12 +411,15 @@ module hx_vision_pipeline #(
             if (frame_start) begin //【HX1P35A-移植适配】帧首发布上一帧亮度，并从当前首像素重新累计。
                 O_frame_luma <= frame_luma_sum[19:12]; //【HX1P35A-移植适配】用移位代替除法器，降低逻辑和时序开销。
                 O_frame_highlights <= frame_highlight_count; //【HX1P35A-移植适配】锁存上一帧高光面积用于防过曝。
+                O_frame_shadows <= frame_shadow_count; //【HX1P35A-移植适配】锁存上一帧深暗面积用于保护暗部结构。
                 O_frame_luma_toggle <= ~O_frame_luma_toggle; //【HX1P35A-移植适配】跨域接收端据此识别新一帧统计值。
                 frame_luma_sum <= {12'd0,gray}; //【HX1P35A-移植适配】当前 (0,0) 像素作为新一帧第一个样点。
                 frame_highlight_count <= (gray >= 8'd245) ? 12'd1 : 12'd0; //【HX1P35A-移植适配】从新帧首像素重新统计真正接近削顶的高光。
+                frame_shadow_count <= (gray <= 8'd48) ? 12'd1 : 12'd0; //【HX1P35A-移植适配】从新帧首像素重新统计深暗区域。
             end else if (luma_sample) begin
                 frame_luma_sum <= frame_luma_sum + gray; //【HX1P35A-移植适配】全画面稀疏亮度累加。
                 if (highlight_sample) frame_highlight_count <= frame_highlight_count + 1'b1; //【HX1P35A-移植适配】累计饱和区域面积。
+                if (shadow_sample) frame_shadow_count <= frame_shadow_count + 1'b1; //【HX1P35A-移植适配】累计深暗区域面积。
             end
 
             if (I_de && (pix_x < IMAGE_WIDTH)) begin
