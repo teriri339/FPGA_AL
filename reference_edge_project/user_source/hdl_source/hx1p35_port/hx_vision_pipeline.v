@@ -136,8 +136,17 @@ module hx_vision_pipeline #(
     wire strong_hyst_neighborhood = strong_hyst_top_d2 || strong_hyst_top_d1 || strong_hyst_top_right ||
                                     strong_hyst_mid_d2 || strong_hyst_mid_right ||
                                     strong_hyst_bot_d2 || strong_hyst_bot_d1 || strong_edge_pixel; //【HX1P35A-移植适配】中心以外的八个方向均可作为弱边的强锚点。
-    wire symmetric_hyst_edge = hyst_window_valid && (strong_hyst_mid_d1 ||
-                               (weak_hyst_mid_d1 && strong_hyst_neighborhood)); //【HX1P35A-移植适配】真正对称的 8 邻域一跳滞后连接。
+    wire weak_hyst_any_a = weak_hyst_top_d2 || weak_hyst_top_d1 || weak_hyst_top_right || weak_hyst_mid_d2;
+    wire weak_hyst_any_b = weak_hyst_mid_right || weak_hyst_bot_d2 || weak_hyst_bot_d1 || weak_edge_pixel;
+    wire weak_hyst_pair_a = (weak_hyst_top_d2 && (weak_hyst_top_d1 || weak_hyst_top_right || weak_hyst_mid_d2)) ||
+                            (weak_hyst_top_d1 && (weak_hyst_top_right || weak_hyst_mid_d2)) ||
+                            (weak_hyst_top_right && weak_hyst_mid_d2);
+    wire weak_hyst_pair_b = (weak_hyst_mid_right && (weak_hyst_bot_d2 || weak_hyst_bot_d1 || weak_edge_pixel)) ||
+                            (weak_hyst_bot_d2 && (weak_hyst_bot_d1 || weak_edge_pixel)) ||
+                            (weak_hyst_bot_d1 && weak_edge_pixel);
+    wire weak_hyst_has_two_neighbors = weak_hyst_pair_a || weak_hyst_pair_b || (weak_hyst_any_a && weak_hyst_any_b); //【HX1P35A-移植适配】并行判断八邻域至少两个弱候选，避免串行加法器进入像素关键路径。
+    wire symmetric_hyst_edge = hyst_window_valid && weak_hyst_mid_d1 && strong_hyst_neighborhood &&
+                               weak_hyst_has_two_neighbors; //【HX1P35A-移植适配】仅救回连接强边且自身形成连续结构的弱边；强边由原通路输出，避免重复加粗孤立噪点。
     wire detail_edge_pixel = nms_valid && (mag_mid_d1 >= sobel_detail_threshold); //【HX1P35A-移植适配】对足够强的梯度取消局部极大值限制，恢复参考效果中的粗亮细节。
     wire edge_core = edge_pixel || symmetric_hyst_edge || coherent_weak_edge || detail_edge_pixel; //【HX1P35A-移植适配】融合因果连接、对称 8 邻域连接、连续弱纹理与强细节。
     reg edge_core_q, edge_core_de_q; //【HX1P35A-移植适配】融合边缘增加一级寄存，切断梯度比较到 HDMI 输出的长组合路径。
