@@ -15,6 +15,19 @@
 
 ## 当前候选版
 
+### checkpoint-20261015-mixed-light-ae
+
+- 提交：`fee2598`
+- 状态：同步检查点；完整综合、布局布线和位流生成通过，等待同场景实拍确认后再决定是否升级为推荐回退点。
+- 主要功能：在平均亮度和高光统计之外增加深暗区域占比；亮暗同时大量存在时不再仅因灯具或窗口而持续压低全局曝光。
+- 调节策略：约 `20%` 样点削顶才执行快速强高光保护；中等高光只有在暗部不占主体时才温和降曝光；增益步长由 `8` 调整为 `4`，曝光步长由 `160` 调整为 `80`，降低明暗场景之间的跳变和闪烁。
+- 预期效果：在保留灯管、窗口内部结构的同时，减少屋顶、人物和室内暗部塌成全黑的情况。
+- 限制：仍是单帧全局曝光折中，不是真正 HDR；尚未加入后续讨论的 Canny 前置自适应锐化和 FPS 显示。
+- 实现结果：setup WNS `0.158 ns`、hold WNS `0.020 ns`、0 个违规端点；16048 slices（75.64%）、39 ERAM、23 DSP。
+- 标准位流 SHA256：`828D8195E7EB4FDCC14E8CD21E540607066C6C94F335135F5C1EB3294DBE5920`。
+- 压缩位流 SHA256：`77DBC0A7FBFF7D1740295BD15E39BDF8229630D9FD669816F4E4DDE89C19B8A3`。
+- 烧录文件：`reference_edge_project/td_project/camera_to_dsi_display_Runs/best_result/camera_to_dsi_display_20261015_mixed-light-ae.bit`。
+
 ### candidate-20261015-highlight-protected-ae
 
 - 提交：`1e365c1`
