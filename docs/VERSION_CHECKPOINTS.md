@@ -15,6 +15,18 @@
 
 ## 当前候选版
 
+### candidate-20261015-highlight-protected-ae
+
+- 提交：`1e365c1`
+- 状态：候选版；完整综合、布局布线和位流生成通过，作为继续优化亮暗共存场景前的回退点。
+- 主要功能：高光统计门限提高到 `245`，仅把真正接近削顶的像素计入过曝面积；自动曝光采用约 `3.3%` 高光保持线和约 `8.3%` 高光降曝光线。
+- 调节策略：大面积高光优先降低增益、再缩短曝光；高光处于平衡带时保持；高光较少且平均亮度偏暗时才继续增亮。
+- 预期效果：避免灯管、窗口被推成整片纯白，并降低自动曝光在亮暗区域之间反复跳动的概率。
+- 限制：这是全局曝光折中，不是真正 HDR；强逆光场景仍可能出现灯具结构保住但暗部偏黑的问题，后续将加入暗部占比和更温和的高光保护。
+- 实现结果：setup WNS `0.135 ns`、hold WNS `0.020 ns`、0 个违规端点；16043 slices（75.62%）、39 RAM、23 DSP。
+- 标准位流 SHA256：`B34080CDFA5AA3921F7BBC0870A19968D7678D7106C978973AC28A4935A274F8`。
+- 烧录文件：`reference_edge_project/td_project/camera_to_dsi_display_Runs/best_result/camera_to_dsi_display_20261015_highlight-protected-ae.bit`。
+
 ### candidate-20261015-structured-8neigh-hysteresis
 
 - 提交：`c21e17a`
