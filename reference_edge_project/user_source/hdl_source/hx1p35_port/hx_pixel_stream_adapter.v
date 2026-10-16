@@ -1,6 +1,6 @@
 `timescale 1ns / 1ps
-//【HX1P35A-移植适配】将参考工程的 RGB888 + 同步标志转换为旧算法使用的时钟像素流，
-//【HX1P35A-移植适配】并将旧算法的固定四拍流水延时反馈为同步标志延时。
+//【资源压缩版】参考工程和后级视觉流水线均使用 RGB888，因此直接传递像素与同步标志。
+// 原来的 RGB->YUV->RGB 往返会占用 12 个 DSP，并引入量化误差和五拍无效延迟。
 module hx_pixel_stream_adapter (
     input wire I_clk, input wire I_rst_n,
     input wire I_vsync, input wire I_hsync, input wire I_de,
@@ -8,31 +8,12 @@ module hx_pixel_stream_adapter (
     output wire O_vsync, output wire O_hsync, output wire O_de,
     output wire O_user, output wire O_last, output wire [23:0] O_rgb
 );
-    wire [7:0] y, u, v;
-    wire [7:0] r, g, b;
-    //【HX1P35A-移植适配】旧 rgb2yuv/yuv2rgb 从采样输入至 RGB 输出相隔四个时钟沿；
-    //【HX1P35A-移植适配】采用五级移位寄存器并取第 4 级，使同步标志与该输出数据同拍。
-    reg [4:0] vs_d, hs_d, de_d, user_d, last_d;
-
-    rgb2yuv_port u_rgb2yuv ( //【HX1P35A-移植适配】旧纯算法实例
-        .RST_I(~I_rst_n), .CLK_I(I_clk), .R_I(I_rgb[23:16]), .G_I(I_rgb[15:8]), .B_I(I_rgb[7:0]),
-        .Y_O(y), .U_O(u), .V_O(v)
-    );
-    yuv2rgb_port u_yuv2rgb ( //【HX1P35A-移植适配】旧纯算法实例
-        .CLK_I(I_clk), .RST_I(~I_rst_n), .Y_I(y), .U_I(u), .V_I(v), .R_O(r), .G_O(g), .B_O(b)
-    );
-
-    always @(posedge I_clk or negedge I_rst_n) begin
-        if (!I_rst_n) begin
-            vs_d <= 0; hs_d <= 0; de_d <= 0; user_d <= 0; last_d <= 0;
-        end else begin
-            vs_d <= {vs_d[3:0], I_vsync}; hs_d <= {hs_d[3:0], I_hsync};
-            de_d <= {de_d[3:0], I_de}; user_d <= {user_d[3:0], I_user};
-            last_d <= {last_d[3:0], I_last};
-        end
-    end
-    assign O_vsync = vs_d[4]; assign O_hsync = hs_d[4]; assign O_de = de_d[4];
-    assign O_user = user_d[4]; assign O_last = last_d[4]; assign O_rgb = {r,g,b};
+    assign O_vsync = I_vsync;
+    assign O_hsync = I_hsync;
+    assign O_de    = I_de;
+    assign O_user  = I_user;
+    assign O_last  = I_last;
+    assign O_rgb   = I_rgb;
 endmodule
 
 //【HX1P35A-移植适配】以下为从旧工程 rgb2yuv.v 剥离的器件无关运算公式；仅模块名增加 _port。

@@ -8,10 +8,7 @@ module hx_vision_pipeline #(
     parameter SOBEL_THRESHOLD_BRIGHT = 12'd64, //【HX1P35A-移植适配】亮区低对比门限降低，使灯管与浅色天花板之间的边界进入候选。
     parameter SOBEL_STRONG_THRESHOLD_DARK = 12'd72, //【HX1P35A-移植适配】暗区增加可靠锚点，Gaussian、NMS 与连续性判断共同抑制噪声。
     parameter SOBEL_STRONG_THRESHOLD_NORMAL = 12'd96, //【HX1P35A-移植适配】普通照明补回主体细节，同时仍由 NMS 限制线宽。
-    parameter SOBEL_STRONG_THRESHOLD_BRIGHT = 12'd112, //【HX1P35A-移植适配】降低亮区强门限，避免灯管轮廓因局部高亮分类而消失。
-    parameter SOBEL_DETAIL_THRESHOLD_DARK = 12'd112, //【HX1P35A-移植适配】暗光下恢复较强的非极大值邻边，增强头发和衣物纹理。
-    parameter SOBEL_DETAIL_THRESHOLD_NORMAL = 12'd144, //【HX1P35A-移植适配】普通照明细节补偿门限兼顾密度和噪声。
-    parameter SOBEL_DETAIL_THRESHOLD_BRIGHT = 12'd176 //【HX1P35A-移植适配】亮区保留灯管、窗框等连续细节，避免原 256 门限过度删除。
+    parameter SOBEL_STRONG_THRESHOLD_BRIGHT = 12'd112 //【HX1P35A-移植适配】降低亮区强门限，避免灯管轮廓因局部高亮分类而消失。
 ) (
     input wire I_clk, input wire I_rst_n,
     input wire I_vsync, input wire I_hsync, input wire I_de,
@@ -45,12 +42,12 @@ module hx_vision_pipeline #(
     reg [11:0] frame_highlight_count; //【HX1P35A-移植适配】3600 个样点的高光计数。
     reg [11:0] frame_shadow_count; //【HX1P35A-移植适配】3600 个样点的深暗计数。
 
-    //【HX1P35A-移植适配】第一组两行缓存构成 3x3 Gaussian 窗口，先抑制传感器噪点和高频细碎纹理。
-    reg [7:0] raw_gray_line1 [0:IMAGE_WIDTH-1]; //【HX1P35A-移植适配】Gaussian 原始灰度上一行缓存。
-    reg [7:0] raw_gray_line2 [0:IMAGE_WIDTH-1]; //【HX1P35A-移植适配】Gaussian 原始灰度上两行缓存。
+    //【资源优化】把同拍访问的两行原始灰度和颜色候选打包进一组显式 ERAM；功能与原三组分布式行缓存一致。
+    wire [17:0] raw_line_rd;
+    wire [17:0] raw_line_wr;
     reg [7:0] raw_top_d2, raw_top_d1, raw_mid_d2, raw_mid_d1, raw_bot_d2, raw_bot_d1; //【HX1P35A-移植适配】Gaussian 3x3 滑动窗口。
-    wire [7:0] raw_top_right = (pix_x < IMAGE_WIDTH) ? raw_gray_line2[pix_x] : 8'd0; //【HX1P35A-移植适配】Gaussian 窗口右上像素。
-    wire [7:0] raw_mid_right = (pix_x < IMAGE_WIDTH) ? raw_gray_line1[pix_x] : 8'd0; //【HX1P35A-移植适配】Gaussian 窗口右中像素。
+    wire [7:0] raw_top_right = (pix_x < IMAGE_WIDTH) ? raw_line_rd[17:10] : 8'd0; //【HX1P35A-移植适配】Gaussian 窗口右上像素。
+    wire [7:0] raw_mid_right = (pix_x < IMAGE_WIDTH) ? raw_line_rd[9:2] : 8'd0; //【HX1P35A-移植适配】Gaussian 窗口右中像素。
     wire [11:0] gaussian_sum = {4'd0,raw_top_d2} + ({4'd0,raw_top_d1} << 1) + {4'd0,raw_top_right} +
                                ({4'd0,raw_mid_d2} << 1) + ({4'd0,raw_mid_d1} << 2) + ({4'd0,raw_mid_right} << 1) +
                                {4'd0,raw_bot_d2} + ({4'd0,raw_bot_d1} << 1) + {4'd0,gray}; //【HX1P35A-移植适配】1-2-1 Gaussian 核，总权重 16。
@@ -58,44 +55,42 @@ module hx_vision_pipeline #(
     reg [7:0] gaussian_gray_q; //【HX1P35A-移植适配】Gaussian 输出寄存一级，切断平滑与 Sobel 之间的长组合路径。
     reg [10:0] gaussian_x_q, gaussian_y_q; //【HX1P35A-移植适配】随 Gaussian 数据延迟的像素坐标。
     reg gaussian_de_q; //【HX1P35A-移植适配】随 Gaussian 数据延迟的有效标志。
+    reg [7:0] gaussian_gray_d;
+    reg [10:0] gaussian_x_d, gaussian_y_d;
+    reg gaussian_de_d;
 
-    //【HX1P35A-移植适配】第二组两行缓存对 Gaussian 输出执行真正的 3x3 Sobel。
-    reg [7:0] gray_line1 [0:IMAGE_WIDTH-1];
-    reg [7:0] gray_line2 [0:IMAGE_WIDTH-1];
+    //【资源优化】Gaussian、Sobel/NMS 和双阈值滞后均使用相同地址，合并为一组 46 位 ERAM 行状态。
+    wire [45:0] edge_line_rd;
+    reg [45:0] edge_line_rd_q; //【资源优化】锁存 ERAM 读数据，将半周期读路径切成完整一拍的算法路径。
     reg [7:0] top_d2, top_d1, mid_d2, mid_d1, bot_d2, bot_d1;
-    wire [7:0] top_right = (gaussian_x_q < IMAGE_WIDTH) ? gray_line2[gaussian_x_q] : 8'd0; //【HX1P35A-移植适配】按流水坐标读取 Gaussian 上两行。
-    wire [7:0] mid_right = (gaussian_x_q < IMAGE_WIDTH) ? gray_line1[gaussian_x_q] : 8'd0; //【HX1P35A-移植适配】按流水坐标读取 Gaussian 上一行。
-    wire [10:0] gx_pos = {3'd0,top_right} + ({3'd0,mid_right} << 1) + {3'd0,gaussian_gray_q}; //【HX1P35A-移植适配】Sobel 右下输入使用寄存后的 Gaussian 像素。
+    wire [7:0] top_right = (gaussian_x_d < IMAGE_WIDTH) ? edge_line_rd_q[45:38] : 8'd0; //【HX1P35A-移植适配】按流水坐标读取 Gaussian 上两行。
+    wire [7:0] mid_right = (gaussian_x_d < IMAGE_WIDTH) ? edge_line_rd_q[37:30] : 8'd0; //【HX1P35A-移植适配】按流水坐标读取 Gaussian 上一行。
+    wire [10:0] gx_pos = {3'd0,top_right} + ({3'd0,mid_right} << 1) + {3'd0,gaussian_gray_d}; //【HX1P35A-移植适配】Sobel 右下输入使用寄存后的 Gaussian 像素。
     wire [10:0] gx_neg = {3'd0,top_d2} + ({3'd0,mid_d2} << 1) + {3'd0,bot_d2};
     wire [10:0] gy_pos = {3'd0,top_d2} + ({3'd0,top_d1} << 1) + {3'd0,top_right};
-    wire [10:0] gy_neg = {3'd0,bot_d2} + ({3'd0,bot_d1} << 1) + {3'd0,gaussian_gray_q}; //【HX1P35A-移植适配】Sobel 下行输入使用寄存后的 Gaussian 像素。
+    wire [10:0] gy_neg = {3'd0,bot_d2} + ({3'd0,bot_d1} << 1) + {3'd0,gaussian_gray_d}; //【HX1P35A-移植适配】Sobel 下行输入使用寄存后的 Gaussian 像素。
     wire [10:0] gx_abs = (gx_pos >= gx_neg) ? (gx_pos - gx_neg) : (gx_neg - gx_pos);
     wire [10:0] gy_abs = (gy_pos >= gy_neg) ? (gy_pos - gy_neg) : (gy_neg - gy_pos);
     wire [11:0] sobel_mag = {1'b0,gx_abs} + {1'b0,gy_abs};
-    wire sobel_valid = gaussian_de_q && (gaussian_x_q >= 11'd4) && (gaussian_y_q >= 11'd4); //【HX1P35A-移植适配】使用延迟坐标判断 Gaussian 与 Sobel 两级窗口完整。
+    wire sobel_valid = gaussian_de_d && (gaussian_x_d >= 11'd4) && (gaussian_y_d >= 11'd4); //【资源优化】使用与 ERAM 读数据同拍的延迟坐标。
     wire local_dark_region = (top_d2 < 8'd96); //【HX1P35A-移植适配】top_d2 与 NMS 中心梯度对齐，明窗与暗墙可分别选择门限。
     wire local_bright_region = (top_d2 >= 8'd176); //【HX1P35A-移植适配】局部高亮区域继续使用严格门限，防止窗格和灯具周围铺满噪声。
     wire [11:0] sobel_threshold = local_dark_region ? SOBEL_THRESHOLD_DARK :
                                   local_bright_region ? SOBEL_THRESHOLD_BRIGHT : SOBEL_THRESHOLD_NORMAL; //【HX1P35A-移植适配】按局部而非整帧亮度选择弱门限，保留同帧暗区细节。
     wire [11:0] sobel_strong_threshold = local_dark_region ? SOBEL_STRONG_THRESHOLD_DARK :
                                          local_bright_region ? SOBEL_STRONG_THRESHOLD_BRIGHT : SOBEL_STRONG_THRESHOLD_NORMAL; //【HX1P35A-移植适配】局部强门限为暗墙弱轮廓提供锚点。
-    wire [11:0] sobel_detail_threshold = local_dark_region ? SOBEL_DETAIL_THRESHOLD_DARK :
-                                         local_bright_region ? SOBEL_DETAIL_THRESHOLD_BRIGHT : SOBEL_DETAIL_THRESHOLD_NORMAL; //【HX1P35A-移植适配】非 NMS 强细节也按局部亮度选择，线宽策略保持不变。
     wire gx_dominant = {1'b0,gx_abs} >= ({1'b0,gy_abs} << 1); //【HX1P35A-移植适配】梯度接近水平方向，局部峰值沿左右比较。
     wire gy_dominant = {1'b0,gy_abs} >= ({1'b0,gx_abs} << 1); //【HX1P35A-移植适配】梯度接近垂直方向，局部峰值沿上下比较。
     wire gx_positive = (gx_pos >= gx_neg); //【HX1P35A-移植适配】保留 Gx 符号以区分两种对角方向。
     wire gy_positive = (gy_pos >= gy_neg); //【HX1P35A-移植适配】保留 Gy 符号以区分两种对角方向。
     wire [1:0] sobel_direction = gx_dominant ? 2'd0 : gy_dominant ? 2'd2 :
                                   ((gx_positive == gy_positive) ? 2'd1 : 2'd3); //【HX1P35A-移植适配】量化为 0/45/90/135 度四方向。
-    reg [11:0] mag_line1 [0:IMAGE_WIDTH-1]; //【HX1P35A-移植适配】保存上一行 Sobel 幅值，构成局部极大值窗口。
-    reg [11:0] mag_line2 [0:IMAGE_WIDTH-1]; //【HX1P35A-移植适配】保存上两行 Sobel 幅值，供纵向梯度峰值比较。
-    reg [1:0]   dir_line1 [0:IMAGE_WIDTH-1]; //【HX1P35A-移植适配】保存上一行四方向梯度编码。
     reg [11:0] mag_top_d2, mag_top_d1, mag_mid_d2, mag_mid_d1, mag_bot_d2, mag_bot_d1; //【HX1P35A-移植适配】Sobel 幅值 3x3 滑动窗口。
     reg [1:0] dir_mid_d2, dir_mid_d1; //【HX1P35A-移植适配】上一行相邻像素的四方向梯度编码。
-    wire [11:0] mag_top_right = (gaussian_x_q < IMAGE_WIDTH) ? mag_line2[gaussian_x_q] : 12'd0; //【HX1P35A-移植适配】按流水坐标读取局部极大值窗口右上幅值。
-    wire [11:0] mag_mid_right = (gaussian_x_q < IMAGE_WIDTH) ? mag_line1[gaussian_x_q] : 12'd0; //【HX1P35A-移植适配】按流水坐标读取局部极大值窗口右侧幅值。
-    wire [1:0] dir_mid_right = (gaussian_x_q < IMAGE_WIDTH) ? dir_line1[gaussian_x_q] : 2'd0; //【HX1P35A-移植适配】按流水坐标读取上一行四方向编码。
-    wire nms_valid = sobel_valid && (gaussian_x_q >= 11'd6) && (gaussian_y_q >= 11'd6); //【HX1P35A-移植适配】使用延迟坐标等待三级窗口全部完整。
+    wire [11:0] mag_top_right = (gaussian_x_d < IMAGE_WIDTH) ? edge_line_rd_q[29:18] : 12'd0; //【HX1P35A-移植适配】按流水坐标读取局部极大值窗口右上幅值。
+    wire [11:0] mag_mid_right = (gaussian_x_d < IMAGE_WIDTH) ? edge_line_rd_q[17:6] : 12'd0; //【HX1P35A-移植适配】按流水坐标读取局部极大值窗口右侧幅值。
+    wire [1:0] dir_mid_right = (gaussian_x_d < IMAGE_WIDTH) ? edge_line_rd_q[5:4] : 2'd0; //【HX1P35A-移植适配】按流水坐标读取上一行四方向编码。
+    wire nms_valid = sobel_valid && (gaussian_x_d >= 11'd6) && (gaussian_y_d >= 11'd6); //【HX1P35A-移植适配】使用延迟坐标等待三级窗口全部完整。
     reg nms_peak; //【HX1P35A-移植适配】四方向局部极大值判断结果。
     always @(*) begin
         case (dir_mid_d1)
@@ -107,40 +102,25 @@ module hx_vision_pipeline #(
     end
     wire weak_edge_pixel = nms_valid && nms_peak && (mag_mid_d1 >= sobel_threshold); //【HX1P35A-移植适配】细化后的弱边缘候选，用于补全低对比度轮廓。
     wire strong_edge_pixel = nms_valid && nms_peak && (mag_mid_d1 >= sobel_strong_threshold); //【HX1P35A-移植适配】强边缘作为滞后筛选锚点。
-    reg weak_line [0:IMAGE_WIDTH-1]; //【HX1P35A-移植适配】保存上一行弱边缘，用连续性恢复人物纹理和灯管等低对比结构。
-    reg weak_left, weak_above_left; //【HX1P35A-移植适配】当前行左邻及上一行左上弱边缘状态。
-    wire weak_above = (gaussian_x_q < IMAGE_WIDTH) ? weak_line[gaussian_x_q] : 1'b0; //【HX1P35A-移植适配】读取上一行同列弱边缘。
-    wire weak_above_right = (gaussian_x_q < IMAGE_WIDTH-1) ? weak_line[gaussian_x_q+1'b1] : 1'b0; //【HX1P35A-移植适配】读取上一行右上弱边缘，保留另一方向斜线。
-    wire weak_connected_to_weak = ((gaussian_x_q != 0) && weak_left) || weak_above || ((gaussian_x_q != 0) && weak_above_left) || weak_above_right; //【HX1P35A-移植适配】只有形成连续结构的弱边缘才可独立进入输出。
-    wire coherent_weak_edge = weak_edge_pixel && weak_connected_to_weak; //【HX1P35A-移植适配】恢复连续弱纹理，仍拒绝孤立的传感器噪点。
-    reg strong_line [0:IMAGE_WIDTH-1]; //【HX1P35A-移植适配】保存上一行强边缘，建立因果 3 邻域连接关系。
-    reg strong_left, strong_above_left; //【HX1P35A-移植适配】当前行左邻和上一行左上邻强边缘状态。
-    wire strong_above = (gaussian_x_q < IMAGE_WIDTH) ? strong_line[gaussian_x_q] : 1'b0; //【HX1P35A-移植适配】按流水坐标读取上一行同列强边缘。
-    wire strong_above_right = (gaussian_x_q < IMAGE_WIDTH-1) ? strong_line[gaussian_x_q+1'b1] : 1'b0; //【HX1P35A-移植适配】上一行右上像素尚未被本行覆盖，可补齐另一方向的斜线连接。
-    wire weak_connected_to_strong = ((gaussian_x_q != 0) && strong_left) || strong_above || ((gaussian_x_q != 0) && strong_above_left) || strong_above_right; //【HX1P35A-移植适配】使用完整的因果四邻域连接强弱边缘，减少斜向细节断裂。
-    wire edge_seed = strong_edge_pixel || (weak_edge_pixel && weak_connected_to_strong); //【HX1P35A-移植适配】第一步只接受强边缘及其直接相邻弱边缘。
-    reg bridge_line [0:IMAGE_WIDTH-1]; //【HX1P35A-移植适配】保存第一步边缘种子，仅供一次受控断点连接。
-    reg bridge_left, bridge_above_left; //【HX1P35A-移植适配】保存边缘种子的左邻与左上邻状态。
-    wire bridge_above = (gaussian_x_q < IMAGE_WIDTH) ? bridge_line[gaussian_x_q] : 1'b0; //【HX1P35A-移植适配】读取上一行同列边缘种子。
-    wire bridge_above_right = (gaussian_x_q < IMAGE_WIDTH-1) ? bridge_line[gaussian_x_q+1'b1] : 1'b0; //【HX1P35A-移植适配】补充右上方向的一次性弱边缘连接。
-    wire weak_connected_to_seed = ((gaussian_x_q != 0) && bridge_left) || bridge_above || ((gaussian_x_q != 0) && bridge_above_left) || bridge_above_right; //【HX1P35A-移植适配】允许弱边缘沿四个已到达方向延伸一个像素，但不无限传播。
-    wire edge_pixel = edge_seed || (weak_edge_pixel && weak_connected_to_seed); //【HX1P35A-移植适配】补齐短断点但不回写最终结果，阻止弱纹理无限传播。
     //【HX1P35A-移植适配】参考流式 Canny 的 3x3 行缓存做法，将双阈值候选延迟到窗口中心再判定。
     // 这样弱边能看到右侧、下侧的强边锚点，补足仅按扫描方向判断时容易丢失的灯管、发丝和斜线。
-    reg weak_hyst_line1 [0:IMAGE_WIDTH-1], weak_hyst_line2 [0:IMAGE_WIDTH-1];
-    reg strong_hyst_line1 [0:IMAGE_WIDTH-1], strong_hyst_line2 [0:IMAGE_WIDTH-1];
     reg weak_hyst_top_d2, weak_hyst_top_d1, weak_hyst_mid_d2, weak_hyst_mid_d1, weak_hyst_bot_d2, weak_hyst_bot_d1;
     reg strong_hyst_top_d2, strong_hyst_top_d1, strong_hyst_mid_d2, strong_hyst_mid_d1, strong_hyst_bot_d2, strong_hyst_bot_d1;
-    wire weak_hyst_top_right = (gaussian_x_q < IMAGE_WIDTH) ? weak_hyst_line2[gaussian_x_q] : 1'b0;
-    wire weak_hyst_mid_right = (gaussian_x_q < IMAGE_WIDTH) ? weak_hyst_line1[gaussian_x_q] : 1'b0;
-    wire strong_hyst_top_right = (gaussian_x_q < IMAGE_WIDTH) ? strong_hyst_line2[gaussian_x_q] : 1'b0;
-    wire strong_hyst_mid_right = (gaussian_x_q < IMAGE_WIDTH) ? strong_hyst_line1[gaussian_x_q] : 1'b0;
-    wire hyst_window_valid = nms_valid && (gaussian_x_q >= 11'd8) && (gaussian_y_q >= 11'd8); //【HX1P35A-移植适配】等待候选的完整 3x3 窗口，边界不引用上一帧残留。
+    wire weak_hyst_top_right = (gaussian_x_d < IMAGE_WIDTH) ? edge_line_rd_q[3] : 1'b0;
+    wire weak_hyst_mid_right = (gaussian_x_d < IMAGE_WIDTH) ? edge_line_rd_q[2] : 1'b0;
+    wire strong_hyst_top_right = (gaussian_x_d < IMAGE_WIDTH) ? edge_line_rd_q[1] : 1'b0;
+    wire strong_hyst_mid_right = (gaussian_x_d < IMAGE_WIDTH) ? edge_line_rd_q[0] : 1'b0;
+    wire [45:0] edge_line_wr = {edge_line_rd_q[37:30], gaussian_gray_d,
+                                edge_line_rd_q[17:6], sobel_mag, sobel_direction,
+                                edge_line_rd_q[2], weak_edge_pixel,
+                                edge_line_rd_q[0], strong_edge_pixel};
+    wire hyst_window_valid = nms_valid && (gaussian_x_d >= 11'd8) && (gaussian_y_d >= 11'd8); //【HX1P35A-移植适配】等待候选的完整 3x3 窗口，边界不引用上一帧残留。
     wire strong_hyst_neighborhood = strong_hyst_top_d2 || strong_hyst_top_d1 || strong_hyst_top_right ||
                                     strong_hyst_mid_d2 || strong_hyst_mid_right ||
                                     strong_hyst_bot_d2 || strong_hyst_bot_d1 || strong_edge_pixel; //【HX1P35A-移植适配】中心以外的八个方向均可作为弱边的强锚点。
     wire weak_hyst_any_a = weak_hyst_top_d2 || weak_hyst_top_d1 || weak_hyst_top_right || weak_hyst_mid_d2;
     wire weak_hyst_any_b = weak_hyst_mid_right || weak_hyst_bot_d2 || weak_hyst_bot_d1 || weak_edge_pixel;
+    wire weak_hyst_has_neighbor = weak_hyst_any_a || weak_hyst_any_b; //【HX1P35A-移植适配】中心像素八邻域中至少存在一个双阈值候选，用于删除完全孤立的白色噪点。
     wire weak_hyst_pair_a = (weak_hyst_top_d2 && (weak_hyst_top_d1 || weak_hyst_top_right || weak_hyst_mid_d2)) ||
                             (weak_hyst_top_d1 && (weak_hyst_top_right || weak_hyst_mid_d2)) ||
                             (weak_hyst_top_right && weak_hyst_mid_d2);
@@ -149,14 +129,25 @@ module hx_vision_pipeline #(
                             (weak_hyst_bot_d1 && weak_edge_pixel);
     wire weak_hyst_has_two_neighbors = weak_hyst_pair_a || weak_hyst_pair_b || (weak_hyst_any_a && weak_hyst_any_b); //【HX1P35A-移植适配】并行判断八邻域至少两个弱候选，避免串行加法器进入像素关键路径。
     wire symmetric_hyst_edge = hyst_window_valid && weak_hyst_mid_d1 && strong_hyst_neighborhood &&
-                               weak_hyst_has_two_neighbors; //【HX1P35A-移植适配】仅救回连接强边且自身形成连续结构的弱边；强边由原通路输出，避免重复加粗孤立噪点。
-    wire detail_edge_pixel = nms_valid && (mag_mid_d1 >= sobel_detail_threshold); //【HX1P35A-移植适配】对足够强的梯度取消局部极大值限制，恢复参考效果中的粗亮细节。
-    wire edge_core = edge_pixel || symmetric_hyst_edge || coherent_weak_edge || detail_edge_pixel; //【HX1P35A-移植适配】融合因果连接、对称 8 邻域连接、连续弱纹理与强细节。
+                               weak_hyst_has_two_neighbors; //【HX1P35A-移植适配】仅救回连接强边且自身形成连续结构的弱边，拒绝无强锚点的弱纹理噪声。
+    wire supported_strong_edge = hyst_window_valid && strong_hyst_mid_d1 && weak_hyst_has_neighbor; //【HX1P35A-移植适配】强边中心若八邻域全黑则判为单点噪声并清零；存在一个邻居即保留，避免损伤细线端点。
+    wire horizontal_one_pixel_gap = weak_hyst_mid_d2 && weak_hyst_mid_right &&
+                                    (strong_hyst_mid_d2 || strong_hyst_mid_right); //【HX1P35A-移植适配】左右边缘相隔一个空点，且至少一侧是强边时补中间像素。
+    wire vertical_one_pixel_gap = weak_hyst_top_d1 && weak_hyst_bot_d1 &&
+                                  (strong_hyst_top_d1 || strong_hyst_bot_d1); //【HX1P35A-移植适配】上下方向的一像素断点连接。
+    wire diagonal_down_one_pixel_gap = weak_hyst_top_d2 && weak_edge_pixel &&
+                                       (strong_hyst_top_d2 || strong_edge_pixel); //【HX1P35A-移植适配】左上到右下方向的一像素断点连接。
+    wire diagonal_up_one_pixel_gap = weak_hyst_top_right && weak_hyst_bot_d2 &&
+                                     (strong_hyst_top_right || strong_hyst_bot_d2); //【HX1P35A-移植适配】右上到左下方向的一像素断点连接。
+    wire one_pixel_gap_edge = hyst_window_valid && !weak_hyst_mid_d1 &&
+                              (horizontal_one_pixel_gap || vertical_one_pixel_gap ||
+                               diagonal_down_one_pixel_gap || diagonal_up_one_pixel_gap); //【HX1P35A-移植适配】只填补夹在双阈值边缘之间的单像素空洞，不扩展孤立噪点。
+    wire edge_core = supported_strong_edge || symmetric_hyst_edge || one_pixel_gap_edge; //【HX1P35A-移植适配】统一输出完整 8 邻域判定结果：强边去孤点、弱边需强锚点、断点仅补一个像素。
     reg edge_core_q, edge_core_de_q; //【HX1P35A-移植适配】融合边缘增加一级寄存，切断梯度比较到 HDMI 输出的长组合路径。
     reg [10:0] edge_x_q; //【HX1P35A-移植适配】保存融合边缘对应横坐标，驱动后级加粗行缓存。
-    reg edge_dilate_line [0:IMAGE_WIDTH-1]; //【HX1P35A-移植适配】保存上一行融合边缘，用于低成本 2x2 形态学膨胀。
+    wire [0:0] dilate_line_rd;
     reg edge_dilate_left, edge_dilate_above_left; //【HX1P35A-移植适配】保存左邻和左上邻边缘，提升 HDMI 上的线条可见度。
-    wire edge_dilate_above = (edge_x_q < IMAGE_WIDTH) ? edge_dilate_line[edge_x_q] : 1'b0; //【HX1P35A-移植适配】读取上一行同列融合边缘。
+    wire edge_dilate_above = (edge_x_q < IMAGE_WIDTH) ? dilate_line_rd[0] : 1'b0; //【HX1P35A-移植适配】读取上一行同列融合边缘。
     wire edge_display_pixel = edge_core_q ||
                               ((edge_x_q != 0) && edge_dilate_left) ||
                               edge_dilate_above ||
@@ -167,9 +158,9 @@ module hx_vision_pipeline #(
     wire raw_green_hit = (I_rgb[15:8] >= 8'd64) && ({1'b0,I_rgb[15:8]} >= ({1'b0,I_rgb[23:16]} + 9'd16)) && ({1'b0,I_rgb[15:8]} >= ({1'b0,I_rgb[7:0]} + 9'd16)); //【HX1P35A-移植适配】放宽绿色候选以识别偏暗、印刷和偏黄绿色包装；邻域一致性继续过滤孤立噪点。
     wire raw_blue_hit = (I_rgb[7:0] >= 8'd96) && ({1'b0,I_rgb[7:0]} >= ({1'b0,I_rgb[23:16]} + 9'd40)) && ({1'b0,I_rgb[7:0]} >= ({1'b0,I_rgb[15:8]} + 9'd40)); //【HX1P35A-移植适配】蓝色候选需具备足够亮度和饱和度。
     wire [1:0] raw_color = raw_red_hit ? 2'd1 : raw_green_hit ? 2'd2 : raw_blue_hit ? 2'd3 : 2'd0; //【HX1P35A-移植适配】将三色候选编码后共用一套行邻域滤波器。
-    reg [1:0] color_line [0:IMAGE_WIDTH-1]; //【HX1P35A-移植适配】保存上一行原始颜色候选，用于排除孤立色噪点。
+    assign raw_line_wr = {raw_line_rd[9:2], gray, raw_color}; //【资源优化】旧上一行推进为上两行，同时写入当前灰度与颜色。
     reg [1:0] color_left, color_above_left; //【HX1P35A-移植适配】保存当前行左邻及上一行左上邻的原始颜色。
-    wire [1:0] color_above = ((pix_y != 0) && (pix_x < IMAGE_WIDTH)) ? color_line[pix_x] : 2'd0; //【HX1P35A-移植适配】首行不引用上一帧残留行缓存。
+    wire [1:0] color_above = ((pix_y != 0) && (pix_x < IMAGE_WIDTH)) ? raw_line_rd[1:0] : 2'd0; //【HX1P35A-移植适配】首行不引用上一帧残留行缓存。
     wire color_match_left = (pix_x != 0) && (raw_color != 0) && (raw_color == color_left); //【HX1P35A-移植适配】当前颜色与左邻一致。
     wire color_match_above = (raw_color != 0) && (raw_color == color_above); //【HX1P35A-移植适配】当前颜色与上邻一致。
     wire color_match_above_left = (pix_x != 0) && (pix_y != 0) && (raw_color != 0) && (raw_color == color_above_left); //【HX1P35A-移植适配】当前颜色与左上邻一致。
@@ -181,6 +172,20 @@ module hx_vision_pipeline #(
     wire [23:0] target_mask_rgb = red_hit ? 24'hff0000 : green_hit ? 24'h00ff00 : blue_hit ? 24'h0000ff : 24'h000000;
     wire [23:0] dim_rgb = {1'b0,I_rgb[23:17],1'b0,I_rgb[15:9],1'b0,I_rgb[7:1]}; //【HX1P35A-移植适配】保留半亮原图作为 COLOR 背景。
     wire [23:0] color_overlay_rgb = target_hit ? target_mask_rgb : dim_rgb; //【HX1P35A-移植适配】目标高亮，未命中区域仍可观察。
+
+    //【资源优化】ERAM 在 I_clk 下降沿预读当前地址，上升沿沿用原流水处理并写回，避免增加整拍延迟。
+    hx_eram_line_store #(.DATA_WIDTH(18)) u_raw_color_line_store (
+        .clk(I_clk), .rd_addr(pix_x), .wr_addr(pix_x),
+        .wr_en(I_de && (pix_x < IMAGE_WIDTH)), .wr_data(raw_line_wr), .rd_data(raw_line_rd)
+    );
+    hx_eram_line_store #(.DATA_WIDTH(46)) u_edge_line_store (
+        .clk(I_clk), .rd_addr(gaussian_x_q), .wr_addr(gaussian_x_d),
+        .wr_en(gaussian_de_d && (gaussian_x_d < IMAGE_WIDTH)), .wr_data(edge_line_wr), .rd_data(edge_line_rd)
+    );
+    hx_eram_line_store #(.DATA_WIDTH(1)) u_dilate_line_store (
+        .clk(I_clk), .rd_addr(edge_x_q), .wr_addr(edge_x_q),
+        .wr_en(edge_core_de_q && (edge_x_q < IMAGE_WIDTH)), .wr_data(edge_core_q), .rd_data(dilate_line_rd)
+    );
 
     //【HX1P35A-移植适配】逐帧统计目标总面积、各颜色面积和外接矩形。
     reg [10:0] cur_xmin, cur_xmax, cur_ymin, cur_ymax;
@@ -367,12 +372,10 @@ module hx_vision_pipeline #(
             x <= 0; y <= 0;
             raw_top_d2 <= 0; raw_top_d1 <= 0; raw_mid_d2 <= 0; raw_mid_d1 <= 0; raw_bot_d2 <= 0; raw_bot_d1 <= 0; //【HX1P35A-移植适配】复位 Gaussian 滑动窗口。
             gaussian_gray_q <= 0; gaussian_x_q <= 0; gaussian_y_q <= 0; gaussian_de_q <= 0; //【HX1P35A-移植适配】复位 Gaussian 流水寄存器及坐标。
+            gaussian_gray_d <= 0; gaussian_x_d <= 0; gaussian_y_d <= 0; gaussian_de_d <= 0; edge_line_rd_q <= 0; //【资源优化】复位 ERAM 读数据对齐级。
             top_d2 <= 0; top_d1 <= 0; mid_d2 <= 0; mid_d1 <= 0; bot_d2 <= 0; bot_d1 <= 0;
             mag_top_d2 <= 0; mag_top_d1 <= 0; mag_mid_d2 <= 0; mag_mid_d1 <= 0; mag_bot_d2 <= 0; mag_bot_d1 <= 0; //【HX1P35A-移植适配】复位 Sobel 幅值细化窗口。
             dir_mid_d2 <= 0; dir_mid_d1 <= 0; //【HX1P35A-移植适配】复位局部极大值方向窗口。
-            weak_left <= 0; weak_above_left <= 0; //【HX1P35A-移植适配】复位连续弱纹理状态。
-            strong_left <= 0; strong_above_left <= 0; //【HX1P35A-移植适配】复位 Sobel 双阈值连接状态。
-            bridge_left <= 0; bridge_above_left <= 0; //【HX1P35A-移植适配】复位单像素断点连接状态。
             weak_hyst_top_d2 <= 0; weak_hyst_top_d1 <= 0; weak_hyst_mid_d2 <= 0; weak_hyst_mid_d1 <= 0; weak_hyst_bot_d2 <= 0; weak_hyst_bot_d1 <= 0;
             strong_hyst_top_d2 <= 0; strong_hyst_top_d1 <= 0; strong_hyst_mid_d2 <= 0; strong_hyst_mid_d1 <= 0; strong_hyst_bot_d2 <= 0; strong_hyst_bot_d1 <= 0; //【HX1P35A-移植适配】复位对称 8 邻域滞后窗口。
             edge_core_q <= 0; edge_core_de_q <= 0; edge_x_q <= 0; //【HX1P35A-移植适配】复位强细节补偿流水级。
@@ -398,10 +401,17 @@ module hx_vision_pipeline #(
             O_rgb <= stage_de ? overlay_rgb : 24'h000000;
 
             gaussian_de_q <= I_de; //【HX1P35A-移植适配】Gaussian 输出有效标志延迟一级以切断长组合路径。
-            edge_core_de_q <= gaussian_de_q; //【HX1P35A-移植适配】边缘融合有效信号随结果再延迟一级。
+            gaussian_de_d <= gaussian_de_q;
+            edge_line_rd_q <= edge_line_rd;
             if (gaussian_de_q) begin
+                gaussian_gray_d <= gaussian_gray_q;
+                gaussian_x_d <= gaussian_x_q;
+                gaussian_y_d <= gaussian_y_q;
+            end
+            edge_core_de_q <= gaussian_de_d; //【资源优化】边缘融合结果与新增 ERAM 对齐级同步。
+            if (gaussian_de_d) begin
                 edge_core_q <= edge_core; //【HX1P35A-移植适配】寄存融合边缘，保证 HDMI 像素时序。
-                edge_x_q <= gaussian_x_q; //【HX1P35A-移植适配】坐标与寄存后的融合边缘保持同拍。
+                edge_x_q <= gaussian_x_d; //【资源优化】坐标与 ERAM 对齐后的融合边缘保持同拍。
             end
             if (I_de) begin
                 gaussian_gray_q <= gaussian_gray; //【HX1P35A-移植适配】寄存平滑结果后再进入 Sobel。
@@ -423,9 +433,6 @@ module hx_vision_pipeline #(
             end
 
             if (I_de && (pix_x < IMAGE_WIDTH)) begin
-                raw_gray_line2[pix_x] <= raw_gray_line1[pix_x]; //【HX1P35A-移植适配】推进 Gaussian 原始灰度行缓存。
-                raw_gray_line1[pix_x] <= gray; //【HX1P35A-移植适配】保存当前原始灰度供下一行平滑。
-                color_line[pix_x] <= raw_color; //【HX1P35A-移植适配】写入本行原始颜色候选，供下一行空间一致性判断。
                 color_left <= raw_color; //【HX1P35A-移植适配】保存当前候选供下一像素水平邻域判断。
                 color_above_left <= (pix_x == 0) ? 2'd0 : color_above; //【HX1P35A-移植适配】保存尚未被覆盖的上一行左上颜色。
                 if (pix_x == 0) begin
@@ -439,29 +446,11 @@ module hx_vision_pipeline #(
                 end
             end
 
-            if (gaussian_de_q && (gaussian_x_q < IMAGE_WIDTH)) begin //【HX1P35A-移植适配】Gaussian 后半段使用独立流水坐标推进。
-                weak_line[gaussian_x_q] <= weak_edge_pixel; //【HX1P35A-移植适配】保存当前弱边缘供下一行连续性判断。
-                weak_left <= weak_edge_pixel; //【HX1P35A-移植适配】保存当前弱边缘供下一像素水平连续性判断。
-                weak_above_left <= (gaussian_x_q == 0) ? 1'b0 : weak_above; //【HX1P35A-移植适配】保存尚未覆盖的上一行左上弱边缘。
-                strong_line[gaussian_x_q] <= strong_edge_pixel; //【HX1P35A-移植适配】写入本行强边缘，供下一行滞后连接判断。
-                strong_left <= strong_edge_pixel; //【HX1P35A-移植适配】保存当前强边缘供下一像素水平连接判断。
-                strong_above_left <= (gaussian_x_q == 0) ? 1'b0 : strong_above; //【HX1P35A-移植适配】保存左上强边缘，支持斜向轮廓。
-                bridge_line[gaussian_x_q] <= edge_seed; //【HX1P35A-移植适配】仅存第一步种子，限制断点连接深度。
-                bridge_left <= edge_seed; //【HX1P35A-移植适配】保存当前种子供下一像素连接。
-                bridge_above_left <= (gaussian_x_q == 0) ? 1'b0 : bridge_above; //【HX1P35A-移植适配】保存左上种子以补斜向短断点。
-                weak_hyst_line2[gaussian_x_q] <= weak_hyst_line1[gaussian_x_q];
-                weak_hyst_line1[gaussian_x_q] <= weak_edge_pixel;
-                strong_hyst_line2[gaussian_x_q] <= strong_hyst_line1[gaussian_x_q];
-                strong_hyst_line1[gaussian_x_q] <= strong_edge_pixel; //【HX1P35A-移植适配】保存双阈值候选，供下一行组成完整 3x3 滞后窗口。
-                mag_line2[gaussian_x_q] <= mag_line1[gaussian_x_q]; //【HX1P35A-移植适配】Sobel 幅值行缓存向上两行推进。
-                mag_line1[gaussian_x_q] <= sobel_mag; //【HX1P35A-移植适配】保存当前 Sobel 幅值供下一行细化。
-                dir_line1[gaussian_x_q] <= sobel_direction; //【HX1P35A-移植适配】保存当前四方向编码供下一行峰值比较。
-                gray_line2[gaussian_x_q] <= gray_line1[gaussian_x_q]; //【HX1P35A-移植适配】推进 Gaussian 平滑结果行缓存。
-                gray_line1[gaussian_x_q] <= gaussian_gray_q; //【HX1P35A-移植适配】写入寄存后的 Gaussian 灰度。
-                if (gaussian_x_q == 0) begin
+            if (gaussian_de_d && (gaussian_x_d < IMAGE_WIDTH)) begin //【资源优化】使用与锁存 ERAM 读数据对齐的坐标推进。
+                if (gaussian_x_d == 0) begin
                     top_d2 <= 0; top_d1 <= top_right; //【HX1P35A-移植适配】新行重新装载 Sobel 上行。
                     mid_d2 <= 0; mid_d1 <= mid_right; //【HX1P35A-移植适配】新行重新装载 Sobel 中行。
-                    bot_d2 <= 0; bot_d1 <= gaussian_gray_q; //【HX1P35A-移植适配】Sobel 新行装载寄存后的平滑像素。
+                    bot_d2 <= 0; bot_d1 <= gaussian_gray_d; //【HX1P35A-移植适配】Sobel 新行装载寄存后的平滑像素。
                     mag_top_d2 <= 0; mag_top_d1 <= mag_top_right; //【HX1P35A-移植适配】新行重新装载幅值窗口上行。
                     mag_mid_d2 <= 0; mag_mid_d1 <= mag_mid_right; //【HX1P35A-移植适配】新行重新装载幅值窗口中行。
                     mag_bot_d2 <= 0; mag_bot_d1 <= sobel_mag; //【HX1P35A-移植适配】新行重新装载幅值窗口下行。
@@ -475,7 +464,7 @@ module hx_vision_pipeline #(
                 end else begin
                     top_d2 <= top_d1; top_d1 <= top_right;
                     mid_d2 <= mid_d1; mid_d1 <= mid_right;
-                    bot_d2 <= bot_d1; bot_d1 <= gaussian_gray_q; //【HX1P35A-移植适配】Sobel 当前行窗口输入寄存后的平滑灰度。
+                    bot_d2 <= bot_d1; bot_d1 <= gaussian_gray_d; //【HX1P35A-移植适配】Sobel 当前行窗口输入寄存后的平滑灰度。
                     mag_top_d2 <= mag_top_d1; mag_top_d1 <= mag_top_right; //【HX1P35A-移植适配】幅值窗口上行水平滑动。
                     mag_mid_d2 <= mag_mid_d1; mag_mid_d1 <= mag_mid_right; //【HX1P35A-移植适配】幅值窗口中行水平滑动。
                     mag_bot_d2 <= mag_bot_d1; mag_bot_d1 <= sobel_mag; //【HX1P35A-移植适配】幅值窗口下行水平滑动。
@@ -490,7 +479,6 @@ module hx_vision_pipeline #(
             end
 
             if (edge_core_de_q && (edge_x_q < IMAGE_WIDTH)) begin
-                edge_dilate_line[edge_x_q] <= edge_core_q; //【HX1P35A-移植适配】写入寄存后的融合边缘供下一行加粗。
                 edge_dilate_left <= edge_core_q; //【HX1P35A-移植适配】保存寄存后的融合边缘供下一像素水平加粗。
                 edge_dilate_above_left <= (edge_x_q == 0) ? 1'b0 : edge_dilate_above; //【HX1P35A-移植适配】保存上一行左上边缘供斜向加粗。
             end
@@ -538,4 +526,69 @@ module hx_vision_pipeline #(
             end
         end
     end
+endmodule
+
+//【资源优化】PH1P35 片上 ERAM 双口行缓存：A 口下降沿读，B 口上升沿写。
+// 使用 2048 深度覆盖 1280 像素行；未用地址不参与画面处理。
+module hx_eram_line_store #(
+    parameter DATA_WIDTH = 8
+) (
+    input  wire                  clk,
+    input  wire [10:0]           rd_addr,
+    input  wire [10:0]           wr_addr,
+    input  wire                  wr_en,
+    input  wire [DATA_WIDTH-1:0] wr_data,
+    output wire [DATA_WIDTH-1:0] rd_data
+);
+    wire [DATA_WIDTH-1:0] unused_write_port_data;
+
+    PH1P_LOGIC_ERAM #(
+        .DATA_WIDTH_A(DATA_WIDTH),
+        .DATA_WIDTH_B(DATA_WIDTH),
+        .ADDR_WIDTH_A(11),
+        .ADDR_WIDTH_B(11),
+        .DATA_DEPTH_A(2048),
+        .DATA_DEPTH_B(2048),
+        .MODE("DP"),
+        .REGMODE_A("NOREG"),
+        .REGMODE_B("NOREG"),
+        .WRITEMODE_A("NORMAL"),
+        .WRITEMODE_B("READBEFOREWRITE"),
+        .IMPLEMENT("20K(FAST)"),
+        .ECC_ENCODE("DISABLE"),
+        .ECC_DECODE("DISABLE"),
+        .CLKMODE("ASYNC"),
+        .SSROVERCE("DISABLE"),
+        .OREGSET_A("RESET"),
+        .OREGSET_B("RESET"),
+        .RESETMODE_A("ASYNC"),
+        .RESETMODE_B("ASYNC"),
+        .ASYNC_RESET_RELEASE_A("ASYNC"),
+        .ASYNC_RESET_RELEASE_B("ASYNC"),
+        .INIT_FILE("NONE"),
+        .FILL_ALL("NONE")
+    ) u_line_eram (
+        .dia({DATA_WIDTH{1'b0}}),
+        .dib(wr_data),
+        .addra(rd_addr),
+        .addrb(wr_addr),
+        .cea(1'b1),
+        .ceb(1'b1),
+        .ocea(1'b0),
+        .oceb(1'b0),
+        .clka(~clk),
+        .clkb(clk),
+        .wea(1'b0),
+        .web(wr_en),
+        .bea(1'b0),
+        .beb(1'b0),
+        .rsta(1'b0),
+        .rstb(1'b0),
+        .doa(rd_data),
+        .dob(unused_write_port_data),
+        .ecc_sbiterr(),
+        .ecc_dbiterr(),
+        .ecc_sbiterrinj(1'b0),
+        .ecc_dbiterrinj(1'b0)
+    );
 endmodule
