@@ -8,7 +8,8 @@ module hx_vision_pipeline #(
     parameter SOBEL_THRESHOLD_BRIGHT = 12'd64, //【HX1P35A-移植适配】亮区低对比门限降低，使灯管与浅色天花板之间的边界进入候选。
     parameter SOBEL_STRONG_THRESHOLD_DARK = 12'd72, //【HX1P35A-移植适配】暗区增加可靠锚点，Gaussian、NMS 与连续性判断共同抑制噪声。
     parameter SOBEL_STRONG_THRESHOLD_NORMAL = 12'd96, //【HX1P35A-移植适配】普通照明补回主体细节，同时仍由 NMS 限制线宽。
-    parameter SOBEL_STRONG_THRESHOLD_BRIGHT = 12'd112 //【HX1P35A-移植适配】降低亮区强门限，避免灯管轮廓因局部高亮分类而消失。
+    parameter SOBEL_STRONG_THRESHOLD_BRIGHT = 12'd112, //【HX1P35A-移植适配】降低亮区强门限，避免灯管轮廓因局部高亮分类而消失。
+    parameter ENABLE_STATUS_OSD = 1'b0 // 默认关闭左上角状态文字和底色，避免遮挡观察画面；设为 1 可恢复。
 ) (
     input wire I_clk, input wire I_rst_n,
     input wire I_vsync, input wire I_hsync, input wire I_de,
@@ -300,7 +301,8 @@ module hx_vision_pipeline #(
     reg [7:0] osd_char;
     reg [23:0] osd_fg;
     wire [4:0] glyph_bits = font5x7(osd_char,glyph_y);
-    wire osd_background = stage_de && (draw_x < 11'd432) && (draw_y < 11'd32);
+    // 状态 OSD 默认关闭。该参数为编译期常量，关闭时字模、BCD 和状态文字逻辑会被综合器删去；COLOR 模式的目标框不受影响。
+    wire osd_background = ENABLE_STATUS_OSD && stage_de && (draw_x < 11'd432) && (draw_y < 11'd32);
     wire osd_glyph = osd_background && (glyph_x < 3'd5) && (glyph_y < 3'd7) && glyph_bits[4-glyph_x];
 
     //【HX1P35A-移植适配】第一行显示算法模式和 EXP:0~3 曝光档；第二行显示主颜色、目标中心坐标和像素面积。
