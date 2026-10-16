@@ -7,16 +7,18 @@
 - TD 工程：`reference_edge_project/td_project/camera_to_dsi_display.al`
 - 顶层 RTL：`reference_edge_project/user_source/hdl_source/design_top_wrapper.v`
 - 管脚约束：`reference_edge_project/user_source/constraints_source/pin.adc`
-- 时序约束：`reference_edge_project/user_source/constraints_source/timing.sdc`
+- 时序约束：`reference_edge_project/td_project/camera_to_dsi_display.sdc`
 
 ## 当前有效功能代码
 
 - `reference_edge_project/user_source/hdl_source/hx1p35_port/`
-  - `hx_pixel_stream_adapter.v`：RGB/YUV 定点变换与像素流适配。
-  - `hx_vision_pipeline.v`：原图、灰度、三色掩膜、3×3 Sobel、目标统计、包围框和 OSD。
-  - `hx_button_mode_ctrl.v`：按键同步、消抖与显示模式控制。
+  - `hx_pixel_stream_adapter.v`：当前为 RGB888 与同步信号直通；旧 RGB/YUV 定点公式仅作参考、未实例化。
+  - `hx_vision_pipeline.v`：原图、灰度、三色掩膜、流式 Canny、目标统计、包围框、OSD、帧亮度统计和 ERAM 行缓存。
+  - `hx_button_mode_ctrl.v`：KEY2/KEY3 同步、消抖、显示模式与自动/手动曝光控制。
 - `reference_edge_project/user_source/hdl_source/uics520_cfg/`
   - SC520 初始化、1280×720@60 寄存器表、曝光和增益配置。
+- `reference_edge_project/user_source/hdl_source/uiisp_beta/ae_set.v`
+  - 自动曝光、手动曝光档位和 HDMI 像素域至摄像头 I²C 域的统计量同步。
 
 上述文件已经加入 `.al` 工程。摄像头至显示的有效链路为：
 

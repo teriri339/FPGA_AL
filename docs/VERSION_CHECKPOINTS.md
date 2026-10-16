@@ -15,6 +15,15 @@
 
 ## 当前候选版
 
+### checkpoint-20261016-eram-linebuffers
+
+- 提交：`a7676fb`（`perf: move vision line buffers to ERAM`）
+- 状态：功能/资源检查点；综合、布局布线和静态时序通过，完整实板回归仍待完成，因此不是“已完成所有场景实拍确认”的稳定推荐版。
+- 主要实现：保留 RAW、GRAY、COLOR、CANNY、自动/手动曝光、OSD、按键和蜂鸣器；RGB888 直通替代未使用的 RGB→YUV→RGB 往返，并把视觉流水线的长行缓存迁移为 8 个 ERAM。
+- 资源与时序：13810 Slice（65.09%）、11437 LUT6（53.91%）、14246 寄存器（33.57%）、296 个分布式 RAM LUT、47 ERAM（43.52%）、11 DSP（27.50%）；Setup WNS `+0.256 ns`、Hold WNS `+0.020 ns`、0 个时序违规端点。
+- 已核验的本机 bit（不受 Git 跟踪）：`best_result/camera_to_dsi_display.bit`，SHA256 `063248A6E5069E96B9ED1981A6DBFF525F58C1A99AA8F017906B5BD944AB9A46`；压缩版 `best_result/camera_to_dsi_display_compress.bit`，SHA256 `C9AE031A9E58D3A09474999EE76325E4BEFE07774F1F481EF1839D42D52108EF`。
+- 实板待确认：四种显示模式、ERAM 流水对齐、自动/手动曝光、KEY1/KEY2/KEY3、目标首次出现时的蜂鸣器、HDMI 实际像素时钟。当前路由报告为 `75.002 MHz`，与 720p60 名义 `74.25 MHz` 需进一步核对。
+
 ### checkpoint-20261015-mixed-light-ae
 
 - 提交：`fee2598`

@@ -1,6 +1,6 @@
-# FPGA_AL 资源压缩实验版
+# FPGA_AL 资源优化记录
 
-该目录由 `FPGA_AL` 当前工作区复制而来，用于单独验证资源压缩，不覆盖原工程。
+本文记录已纳入 `WZY` 的资源优化基线及其验证结果。当前 ERAM 行缓存基线为提交 `a7676fb`（标签 `checkpoint-20261016-eram-linebuffers`）；生成的 bit、面积和时序报告是本地构建产物，不随 Git 跟踪。
 
 ## 基线
 
@@ -41,7 +41,7 @@ Slice/LUT 的降幅较小，下一阶段需要将视觉行缓存从分布式 RAM
 
 ## 第二阶段：视觉行缓存迁移至 ERAM
 
-保持 RAW、GRAY、COLOR、SOBEL、CANNY、自动曝光、OSD、按键和蜂鸣器功能不变，
+保持 RAW、GRAY、COLOR、CANNY、自动曝光、OSD、按键和蜂鸣器功能不变，
 把 `hx_vision_pipeline` 内用于 Gaussian、Sobel、NMS、双阈值连接和膨胀的长行缓存，
 由大量 LUT 分布式 RAM 改为 8 个片上 ERAM。RGB 直通优化也继续保留。
 
@@ -62,8 +62,11 @@ Slice/LUT 的降幅较小，下一阶段需要将视觉行缓存从分布式 RAM
 - Setup WNS：+0.256 ns
 - Hold WNS：+0.020 ns
 - 时序违例：0
-- 位流 SHA256：`8ADD57C30C3C974D2786131EF862FF15F22AAF61619296A98DDF8E63D06AC2B0`
-- 测试位流：`camera_to_dsi_display_20261016_rgb-direct-eram-linebuffers.bit`
+- 标准位流：`camera_to_dsi_display.bit`
+  - SHA256：`063248A6E5069E96B9ED1981A6DBFF525F58C1A99AA8F017906B5BD944AB9A46`
+- 压缩位流：`camera_to_dsi_display_compress.bit`
+  - SHA256：`C9AE031A9E58D3A09474999EE76325E4BEFE07774F1F481EF1839D42D52108EF`
+- 文件位置：本机构建副本的 `camera_to_dsi_display_Runs/best_result/`；这些生成物未提交到 Git。
 
 ### 综合结论
 
