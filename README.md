@@ -9,6 +9,10 @@
 
 这是基于安路 PH1P35A 的 SC520 MIPI 摄像头实时视觉工程。工程在参考的摄像头、ISP、DDR 帧缓存和 HDMI 输出链路上，加入了纯 RTL 的原图/灰度/颜色识别/Canny 边缘检测、自动曝光、OSD、按键控制和蜂鸣器告警。
 
+边缘算法阅读入口：[核心代码分阶段整理](docs/EDGE_DETECTION_CORE.md)，包含灰度、高斯平滑、Sobel、NMS、双阈值、邻域连接和显示加粗；仅整理说明，不改变 RTL 和当前位流。
+
+当前默认使用 [白纸残差固定补偿 V2](docs/WHITE_FIELD_PAPER_V2.md)：根据用户烧录旧免操作版后拍摄的两张白纸图，重新拟合残余色偏并与旧表组合，上电直接应用，不需要长按或按键标定。保留动态 AWB、自动曝光和原按键行为。验证位流已同步到原 `best_result/camera_to_dsi_display.bit`，生成时间为 2026-10-17 15:55:01；旧文件保存在同目录 `backup_before_paper_v2_20261017/`。下述资源/时序表仍属于原 ERAM 基线。之前的 [经验补偿 V1](docs/WHITE_FIELD_SOFT_PRESET.md)、[板上自标定](docs/WHITE_FIELD_SELF_CALIBRATION.md) 保留为历史/可选方案。
+
 `RAW` 显示模式的含义是“绕过本工程视觉算法的 RGB 原图”。它**不是**传感器 Bayer RAW10：画面已依次经过 SC520、MIPI、RAW10 解包、demosaic/ISP 和 DDR 帧缓存。因此 RAW 模式中观察到的颜色偏差可用于区分摄像头/ISP 问题与后级算法问题。
 
 ## 当前版本摘要

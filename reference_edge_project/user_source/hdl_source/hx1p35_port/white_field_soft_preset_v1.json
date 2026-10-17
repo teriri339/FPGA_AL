@@ -1,0 +1,19 @@
+{
+  "empirical_only": true,
+  "strength": 0.85,
+  "source_rgb_means": [
+    198.4997838670143,
+    201.09016355851494,
+    197.21207817476426
+  ],
+  "gain_min": 0.93359375,
+  "gain_max": 1.05859375,
+  "center_node_rgb_gains": [
+    1.05859375,
+    0.96875,
+    1.015625
+  ],
+  "mode": "spatial chroma only; global geometric-mean gain normalized per channel",
+  "source_sha256": "4ac51001942cd5145df11d18874bd17874e943b9dc4100eff82aeb3283271517",
+  "source_name": "codex-clipboard-faec0952-5683-4a93-9e63-e48eab47c920.png"
+}

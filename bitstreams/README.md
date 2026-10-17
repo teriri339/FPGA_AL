@@ -1,0 +1,33 @@
+# 白场修正测试位流
+
+当前版本为 `camera_whitefield_paper_v2_20261017.bit`（生成时间 15:55:01），同时已同步到用户原来使用的 `reference_edge_project/td_project/camera_to_dsi_display_Runs/best_result/camera_to_dsi_display.bit`。上电直接应用，不用长按、也不用再次摆白板做按键标定。旧 `best_result` 文件已备份到其下 `backup_before_paper_v2_20261017/`。
+
+- SHA256：`59B133D52AA1F297AB0445A0F37D093AA52691A1200C702D3E366F46D5A33791`。
+- 根据两张实拍白纸的残余色差重新计算，原 AWB/自动曝光逻辑不变。
+- 最终 Setup WNS `+0.326 ns`，Hold WNS `+0.020 ns`，违规端点 0。
+- 操作与限制见 [白纸残差补偿 V2](../docs/WHITE_FIELD_PAPER_V2.md)。这是待实板确认的版本，不宣称照片里的色偏已实际消除。
+
+## 之前的经验补偿 V1
+
+`camera_whitefield_easy_20261017.bit` 是旧经验补偿版，用户实拍已确认中央偏绿仍明显，已被上面的 V2 替代。
+
+- 生成时间：2026-10-17 15:29:56；1,789,539 字节。
+- SHA256：`1F2684AA4A030D7658C8D244086BA10846B292D8349CCC709D33B6B486CF242C`。
+- 最终布线时序：Setup WNS `+0.326 ns`，Hold WNS `+0.020 ns`，违规端点 0。
+- 说明：[免操作轻度空间补偿](../docs/WHITE_FIELD_SOFT_PRESET.md)。
+
+以下保留之前自标定版的记录。该版标定前固定 AWB，可能呈现明显整体偏绿，不作为当前免操作方案的默认文件。
+
+## 之前的自标定版本
+
+文件：`camera_whitefield_selfcal_20261017.bit`
+
+- 生成时间：2026-10-17 15:10:15（本机时间）。
+- 目标器件：PH1P35MDG324，速度档 3；文件大小 1,789,539 字节。
+- SHA256：`D5D03BA2AE4D5DDFDC3550DD0D863FE9667580175877D3260661392B26AC427E`。
+- 配置：板上自标定开启、实时 LSC 开启、全局 AWB 固定单位增益，没有写入合成场景增益表。
+- 最终布线时序：Setup WNS `+0.437 ns`，Hold WNS `+0.020 ns`，违规端点 0。
+
+烧录后，用均匀照明的白板覆盖整个视场，长按 KEY2 两秒，保持白板直到右上角蓝条变绿，再移开白板观察。红条表示标定无效，调整曝光或光照后重试。上电先显示未标定图像，不会自动拿正常场景当白板。KEY3 调曝光会废弃旧系数，断电后也需重新标定。
+
+操作和验证说明见 [板上白场自标定](../docs/WHITE_FIELD_SELF_CALIBRATION.md)。该位流已生成并通过仿真和工具时序检查，尚未由助手烧录或确认实板效果。原 `best_result` 未覆盖。

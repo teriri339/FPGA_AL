@@ -1,6 +1,14 @@
 
 
-module design_top_wrapper (
+module design_top_wrapper #(
+    parameter WHITE_FIELD_SELF_CAL = 0,
+    parameter WHITE_FIELD_SOFT_PRESET = 1,
+    parameter LSC_ENABLE = 1,
+    parameter LSC_GAIN_FILE = "",
+    parameter LSC_BLACK_LEVEL = 0,
+    // Keep enabled for both calibration and corrected operation with the same LUT.
+    parameter WHITE_FIELD_FIXED_AWB = WHITE_FIELD_SELF_CAL
+) (
     input wire        I_sys_clk,
     input wire        I_rst_n,
       
@@ -172,6 +180,8 @@ module design_top_wrapper (
     wire[1:0]   S_vision_mode;
     wire[1:0]   S_exposure_level; //【HX1P35A-移植适配】KEY3 选择的手动曝光档位（HDMI 像素时钟域）。
     wire        S_auto_exposure; //【HX1P35A-移植适配】自动曝光模式，上电默认开启。
+    wire S_calibrate,S_invalidate_calibration,S_cal_busy,S_cal_valid,S_cal_error;
+    wire [1:0] S_cal_status=S_cal_busy?2'd1:(S_cal_error?2'd3:(S_cal_valid?2'd2:2'd0));
     wire[7:0]   S_frame_luma; //【HX1P35A-移植适配】视频帧全局平均亮度。
     wire[11:0]  S_frame_highlights; //【HX1P35A-移植适配】视频帧接近饱和的高光样点数量。
     wire[11:0]  S_frame_shadows; //【HX1P35A-移植适配】视频帧深暗样点数量，用于亮暗共存测光。
@@ -670,7 +680,7 @@ assign S_raw_tuser  = S_axis_tuser;
 
 
 //ISP算法顶层模块
-isp_top u_isp_top (
+isp_top #(.FIXED_AWB(WHITE_FIELD_FIXED_AWB)) u_isp_top (
 .axi4s_video_aclk(S_csi_rx_clk),
 .I_rst_n         (S_rst_n),
 .I_tlast         (S_raw_tlast	),
@@ -743,23 +753,31 @@ isp_top u_isp_top (
     );
 
     //【HX1P35A-移植适配】KEY2 切换显示模式；KEY3 循环 AUTO/四档手动曝光；蜂鸣器由板载 SW5 控制。
-    hx_button_mode_ctrl u_hx_button_mode_ctrl(
+    hx_button_mode_ctrl #(.SELF_CALIBRATION(WHITE_FIELD_SELF_CAL)) u_hx_button_mode_ctrl(
         .I_clk(S_hdmi_pixel_clk), .I_rst_n(S_hdmi_rst_n), .I_button_n(I_button),
+        .I_cal_busy(S_cal_busy),.O_calibrate(S_calibrate),.O_invalidate_calibration(S_invalidate_calibration),
         .O_mode(S_vision_mode), .O_alarm_enable(S_alarm_enable), .O_exposure_level(S_exposure_level), .O_auto_exposure(S_auto_exposure) //【HX1P35A-移植适配】
     );
 
     //【HX1P35A-移植适配】不修改 MIPI、DDR 或 HDMI 驱动，仅处理 DDR 读出的 RGB888 像素流。
-    hx_pixel_stream_adapter u_hx_pixel_stream_adapter(
+    hx_pixel_stream_adapter #(
+        .LSC_ENABLE(LSC_ENABLE), .LSC_GAIN_FILE(LSC_GAIN_FILE),
+        .LSC_BLACK_LEVEL(LSC_BLACK_LEVEL),.SELF_CALIBRATION(WHITE_FIELD_SELF_CAL),
+        .SOFT_PRESET(WHITE_FIELD_SOFT_PRESET)
+    ) u_hx_pixel_stream_adapter(
         .I_clk(S_hdmi_pixel_clk), .I_rst_n(S_hdmi_rst_n),
         .I_vsync(S_hdmi_vsync), .I_hsync(S_hdmi_hsync), .I_de(S_hdmi_de),
         .I_user(S_hdmi_user), .I_last(S_hdmi_last), .I_rgb(S_video_rd_data),
+        .I_calibrate(S_calibrate),.I_invalidate_calibration(S_invalidate_calibration),
+        .O_cal_busy(S_cal_busy),.O_cal_valid(S_cal_valid),.O_cal_error(S_cal_error),
         .O_vsync(S_alg_vsync), .O_hsync(S_alg_hsync), .O_de(S_alg_de),
         .O_user(S_alg_user), .O_last(S_alg_last), .O_rgb(S_alg_rgb)
     );
 
     //【HX1P35A-移植适配】纯 RTL 视觉功能，位于算法适配层与 HDMI 混合器之间。
-    hx_vision_pipeline u_hx_vision_pipeline(
+    hx_vision_pipeline #(.ENABLE_CAL_STATUS(WHITE_FIELD_SELF_CAL)) u_hx_vision_pipeline(
         .I_clk(S_hdmi_pixel_clk), .I_rst_n(S_hdmi_rst_n),
+        .I_cal_status(S_cal_status),
         .I_vsync(S_alg_vsync), .I_hsync(S_alg_hsync), .I_de(S_alg_de),
         .I_user(S_alg_user), .I_last(S_alg_last), .I_rgb(S_alg_rgb), .I_mode(S_vision_mode), .I_exposure_level(S_exposure_level), .I_auto_exposure(S_auto_exposure), //【HX1P35A-移植适配】OSD 显示自动或手动曝光状态。
         .O_vsync(S_vision_vsync), .O_hsync(S_vision_hsync), .O_de(S_vision_de),

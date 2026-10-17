@@ -9,7 +9,8 @@ module hx_vision_pipeline #(
     parameter SOBEL_STRONG_THRESHOLD_DARK = 12'd72, //【HX1P35A-移植适配】暗区增加可靠锚点，Gaussian、NMS 与连续性判断共同抑制噪声。
     parameter SOBEL_STRONG_THRESHOLD_NORMAL = 12'd96, //【HX1P35A-移植适配】普通照明补回主体细节，同时仍由 NMS 限制线宽。
     parameter SOBEL_STRONG_THRESHOLD_BRIGHT = 12'd112, //【HX1P35A-移植适配】降低亮区强门限，避免灯管轮廓因局部高亮分类而消失。
-    parameter ENABLE_STATUS_OSD = 1'b0 // 默认关闭左上角状态文字和底色，避免遮挡观察画面；设为 1 可恢复。
+    parameter ENABLE_STATUS_OSD = 1'b0, // 默认关闭左上角状态文字和底色，避免遮挡观察画面；设为 1 可恢复。
+    parameter ENABLE_CAL_STATUS = 0
 ) (
     input wire I_clk, input wire I_rst_n,
     input wire I_vsync, input wire I_hsync, input wire I_de,
@@ -17,6 +18,7 @@ module hx_vision_pipeline #(
     input wire [1:0] I_mode,
     input wire [1:0] I_exposure_level, //【HX1P35A-移植适配】在 HDMI OSD 中显示当前曝光档位。
     input wire I_auto_exposure, //【HX1P35A-移植适配】OSD 显示 AUTO 状态。
+    input wire [1:0] I_cal_status,
     output reg O_vsync, output reg O_hsync, output reg O_de,
     output reg O_user, output reg O_last, output reg [23:0] O_rgb,
     output reg O_target_found, output reg [23:0] O_target_pixels,
@@ -367,6 +369,14 @@ module hx_vision_pipeline #(
         if (osd_glyph) overlay_rgb = osd_fg;
         else if (osd_background) overlay_rgb = 24'h101018;
         else if (box_border) overlay_rgb = 24'hffff00;
+        // Small top-right strip: gray=unlearned, blue=capturing, green=applied, red=invalid white field.
+        if(ENABLE_CAL_STATUS && draw_y<6 && draw_x>=IMAGE_WIDTH-64)
+            case(I_cal_status)
+                1:overlay_rgb=24'h4080ff;
+                2:overlay_rgb=24'h20e060;
+                3:overlay_rgb=24'hff3030;
+                default:overlay_rgb=24'h808080;
+            endcase
     end
 
     always @(posedge I_clk or negedge I_rst_n) begin

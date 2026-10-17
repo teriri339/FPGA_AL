@@ -1,0 +1,61 @@
+{
+  "mode": "two-output-frame residual chroma refinement; composed with already applied LUT",
+  "baseline_sha256": "9e23040aa4d25e948dbe6205f4aa9f680da0073bac68a414a2d91679928ce9d7",
+  "source_sha256": [
+    "78a6496244602cf7def1d165b0542d017d38085c6381accc54d5bf3d9525b7ec",
+    "f9e144ffb60ce3fa9e42f60855d98277550b03b526ca73ab768cc67db42f56c0"
+  ],
+  "gain_min": 0.84765625,
+  "gain_max": 1.171875,
+  "center_rgb_gains": [
+    1.171875,
+    0.91796875,
+    1.0546875
+  ],
+  "inter_photo_log_chroma_offset": [
+    -0.010059534253047455,
+    -0.00038911575960336983
+  ],
+  "validation": [
+    {
+      "name": "WIN_20261017_15_38_31_Pro.jpg",
+      "samples": 1081,
+      "before_median_channel_spread": 0.05366726296958855,
+      "predicted_median_channel_spread": 0.0147909892075857,
+      "predicted_p95_channel_spread": 0.03964328531441279,
+      "held_out_median_channel_spread": 0.0266924781343435,
+      "held_out_p95_channel_spread": 0.06371994031824325,
+      "central_sample_rgb_before": [
+        203.73837209302326,
+        226.43023255813952,
+        206.03488372093022
+      ],
+      "central_sample_rgb_predicted": [
+        219.93935734735152,
+        216.76815905211203,
+        213.88286516948529
+      ]
+    },
+    {
+      "name": "WIN_20261017_15_40_06_Pro.jpg",
+      "samples": 1235,
+      "before_median_channel_spread": 0.07195571955719558,
+      "predicted_median_channel_spread": 0.017629728821186956,
+      "predicted_p95_channel_spread": 0.03796897693698881,
+      "held_out_median_channel_spread": 0.030170689157295105,
+      "held_out_p95_channel_spread": 0.07453689911791501,
+      "central_sample_rgb_before": [
+        187.19615384615383,
+        216.29615384615386,
+        199.43076923076924
+      ],
+      "central_sample_rgb_predicted": [
+        203.0586430155081,
+        206.62033870279603,
+        206.97227587659916
+      ]
+    }
+  ],
+  "no_hardware_verification": true,
+  "illumination_flattening": false
+}

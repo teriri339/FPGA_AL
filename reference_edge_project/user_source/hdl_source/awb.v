@@ -18,6 +18,7 @@ version:     :
                  得它的适用行更加广泛了。
 *****************************************************************/
 module awb  #(   
+    parameter FIXED_GAINS = 0, // Unity R/G/B for repeatable white-field calibration.
     parameter IMG_HEIGHT = 1080,
     parameter IMG_WIDTH  = 1920
 ) 
@@ -212,7 +213,7 @@ assign  rgb888_b_d0[0] = I_tdata_d0[0+:8];
             in_r_r1 <= 20'h10000;
             in_b_r1 <= 20'h10000;
         end
-        else if(done[0])begin
+        else if(done[0] && !FIXED_GAINS)begin
             if(|in_r_x1[47:20])
                 in_r_r1 <= 20'hfffff;
             else 
