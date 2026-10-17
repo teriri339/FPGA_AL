@@ -1,6 +1,18 @@
 # 白场修正测试位流
 
-当前版本为 `camera_whitefield_paper_v2_20261017.bit`（生成时间 15:55:01），同时已同步到用户原来使用的 `reference_edge_project/td_project/camera_to_dsi_display_Runs/best_result/camera_to_dsi_display.bit`。上电直接应用，不用长按、也不用再次摆白板做按键标定。旧 `best_result` 文件已备份到其下 `backup_before_paper_v2_20261017/`。
+## 最新：边缘去孤点与短断口连接
+
+当前交付为 `camera_edge_clean_link_20261017.bit`（2026-10-17 17:36:22），保留白场 V2，在边缘加粗前增加去无支撑小点簇和四方向 1～2 像素连接。标准/压缩位流均已同步至原 `best_result`。
+
+- 标准位流 SHA256：`A50301C6268C60E88D66B3825FDD630BA630201B0E85BC48F0FDE039CB297517`。
+- Setup WNS +0.241 ns，Hold WNS +0.020 ns，违规端点 0；720p 四帧逐像素仿真通过。
+- 原文件备份：`best_result/backup_before_edge_refine_20261017_173622/`。
+- 使用方法：烧录原目录的 `camera_to_dsi_display.bit`，切到 CANNY 边缘模式，不用额外标定。
+- 限制和完整验证见 [边缘清理与连接](../docs/EDGE_REFINEMENT.md)，实际效果待烧录确认。
+
+## 白场 V2 历史验证文件
+
+白场 V2 原验证文件为 `camera_whitefield_paper_v2_20261017.bit`（生成时间 15:55:01），原先同步到用户 `best_result/camera_to_dsi_display.bit`，该交付位置现已更新为上述边缘精修版。白场 V2 上电直接应用，不用长按、也不用再次摆白板做按键标定。白场 V2 替换前的更早文件仍保存在 `best_result/backup_before_paper_v2_20261017/`。
 
 - SHA256：`59B133D52AA1F297AB0445A0F37D093AA52691A1200C702D3E366F46D5A33791`。
 - 根据两张实拍白纸的残余色差重新计算，原 AWB/自动曝光逻辑不变。

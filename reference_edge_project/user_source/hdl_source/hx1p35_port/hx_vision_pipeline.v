@@ -10,6 +10,7 @@ module hx_vision_pipeline #(
     parameter SOBEL_STRONG_THRESHOLD_NORMAL = 12'd96, //【HX1P35A-移植适配】普通照明补回主体细节，同时仍由 NMS 限制线宽。
     parameter SOBEL_STRONG_THRESHOLD_BRIGHT = 12'd112, //【HX1P35A-移植适配】降低亮区强门限，避免灯管轮廓因局部高亮分类而消失。
     parameter ENABLE_STATUS_OSD = 1'b0, // 默认关闭左上角状态文字和底色，避免遮挡观察画面；设为 1 可恢复。
+    parameter ENABLE_EDGE_REFINEMENT = 1'b1, // 加粗前去除无延伸支撑的小点簇，再定向连接 1~2 像素断口。
     parameter ENABLE_CAL_STATUS = 0
 ) (
     input wire I_clk, input wire I_rst_n,
@@ -147,14 +148,27 @@ module hx_vision_pipeline #(
                                diagonal_down_one_pixel_gap || diagonal_up_one_pixel_gap); //【HX1P35A-移植适配】只填补夹在双阈值边缘之间的单像素空洞，不扩展孤立噪点。
     wire edge_core = supported_strong_edge || symmetric_hyst_edge || one_pixel_gap_edge; //【HX1P35A-移植适配】统一输出完整 8 邻域判定结果：强边去孤点、弱边需强锚点、断点仅补一个像素。
     reg edge_core_q, edge_core_de_q; //【HX1P35A-移植适配】融合边缘增加一级寄存，切断梯度比较到 HDMI 输出的长组合路径。
-    reg [10:0] edge_x_q; //【HX1P35A-移植适配】保存融合边缘对应横坐标，驱动后级加粗行缓存。
+    reg [10:0] edge_x_q, edge_y_q; // 融合边缘对应的扫描坐标。
+    wire refined_edge, refined_de;
+    wire [10:0] refined_x;
+    generate if (ENABLE_EDGE_REFINEMENT) begin : g_edge_refinement
+        hx_edge_binary_refine #(.IMAGE_WIDTH(IMAGE_WIDTH)) u_refine (
+            .I_clk(I_clk), .I_rst_n(I_rst_n), .I_de(edge_core_de_q),
+            .I_x(edge_x_q), .I_y(edge_y_q), .I_edge(edge_core_q),
+            .O_de(refined_de), .O_x(refined_x), .O_edge(refined_edge)
+        );
+    end else begin : g_edge_refinement_bypass
+        assign refined_de = edge_core_de_q;
+        assign refined_x = edge_x_q;
+        assign refined_edge = edge_core_q;
+    end endgenerate
     wire [0:0] dilate_line_rd;
     reg edge_dilate_left, edge_dilate_above_left; //【HX1P35A-移植适配】保存左邻和左上邻边缘，提升 HDMI 上的线条可见度。
-    wire edge_dilate_above = (edge_x_q < IMAGE_WIDTH) ? dilate_line_rd[0] : 1'b0; //【HX1P35A-移植适配】读取上一行同列融合边缘。
-    wire edge_display_pixel = edge_core_q ||
-                              ((edge_x_q != 0) && edge_dilate_left) ||
+    wire edge_dilate_above = (refined_x < IMAGE_WIDTH) ? dilate_line_rd[0] : 1'b0;
+    wire edge_display_pixel = refined_edge ||
+                              ((refined_x != 0) && edge_dilate_left) ||
                               edge_dilate_above ||
-                              ((edge_x_q != 0) && edge_dilate_above_left); //【HX1P35A-移植适配】边缘向右、向下各扩展一像素，接近参考画面的粗亮轮廓。
+                              ((refined_x != 0) && edge_dilate_above_left);
 
     //【HX1P35A-移植适配】先用亮度与通道差筛选颜色候选，再用同色邻域一致性抑制暗光 Bayer/增益噪点。
     wire raw_red_hit = (I_rgb[23:16] >= 8'd96) && ({1'b0,I_rgb[23:16]} >= ({1'b0,I_rgb[15:8]} + 9'd40)) && ({1'b0,I_rgb[23:16]} >= ({1'b0,I_rgb[7:0]} + 9'd40)); //【HX1P35A-移植适配】红色候选需具备足够亮度和饱和度。
@@ -186,8 +200,8 @@ module hx_vision_pipeline #(
         .wr_en(gaussian_de_d && (gaussian_x_d < IMAGE_WIDTH)), .wr_data(edge_line_wr), .rd_data(edge_line_rd)
     );
     hx_eram_line_store #(.DATA_WIDTH(1)) u_dilate_line_store (
-        .clk(I_clk), .rd_addr(edge_x_q), .wr_addr(edge_x_q),
-        .wr_en(edge_core_de_q && (edge_x_q < IMAGE_WIDTH)), .wr_data(edge_core_q), .rd_data(dilate_line_rd)
+        .clk(I_clk), .rd_addr(refined_x), .wr_addr(refined_x),
+        .wr_en(refined_de && (refined_x < IMAGE_WIDTH)), .wr_data(refined_edge), .rd_data(dilate_line_rd)
     );
 
     //【HX1P35A-移植适配】逐帧统计目标总面积、各颜色面积和外接矩形。
@@ -390,7 +404,7 @@ module hx_vision_pipeline #(
             dir_mid_d2 <= 0; dir_mid_d1 <= 0; //【HX1P35A-移植适配】复位局部极大值方向窗口。
             weak_hyst_top_d2 <= 0; weak_hyst_top_d1 <= 0; weak_hyst_mid_d2 <= 0; weak_hyst_mid_d1 <= 0; weak_hyst_bot_d2 <= 0; weak_hyst_bot_d1 <= 0;
             strong_hyst_top_d2 <= 0; strong_hyst_top_d1 <= 0; strong_hyst_mid_d2 <= 0; strong_hyst_mid_d1 <= 0; strong_hyst_bot_d2 <= 0; strong_hyst_bot_d1 <= 0; //【HX1P35A-移植适配】复位对称 8 邻域滞后窗口。
-            edge_core_q <= 0; edge_core_de_q <= 0; edge_x_q <= 0; //【HX1P35A-移植适配】复位强细节补偿流水级。
+            edge_core_q <= 0; edge_core_de_q <= 0; edge_x_q <= 0; edge_y_q <= 0;
             edge_dilate_left <= 0; edge_dilate_above_left <= 0; //【HX1P35A-移植适配】复位边缘加粗邻域状态。
             color_left <= 0; color_above_left <= 0; //【HX1P35A-移植适配】复位颜色邻域一致性状态。
             cur_count <= 0; cur_red_count <= 0; cur_green_count <= 0; cur_blue_count <= 0;
@@ -424,6 +438,7 @@ module hx_vision_pipeline #(
             if (gaussian_de_d) begin
                 edge_core_q <= edge_core; //【HX1P35A-移植适配】寄存融合边缘，保证 HDMI 像素时序。
                 edge_x_q <= gaussian_x_d; //【资源优化】坐标与 ERAM 对齐后的融合边缘保持同拍。
+                edge_y_q <= gaussian_y_d;
             end
             if (I_de) begin
                 gaussian_gray_q <= gaussian_gray; //【HX1P35A-移植适配】寄存平滑结果后再进入 Sobel。
@@ -490,9 +505,9 @@ module hx_vision_pipeline #(
                 end
             end
 
-            if (edge_core_de_q && (edge_x_q < IMAGE_WIDTH)) begin
-                edge_dilate_left <= edge_core_q; //【HX1P35A-移植适配】保存寄存后的融合边缘供下一像素水平加粗。
-                edge_dilate_above_left <= (edge_x_q == 0) ? 1'b0 : edge_dilate_above; //【HX1P35A-移植适配】保存上一行左上边缘供斜向加粗。
+            if (refined_de && (refined_x < IMAGE_WIDTH)) begin
+                edge_dilate_left <= refined_edge;
+                edge_dilate_above_left <= (refined_x == 0) ? 1'b0 : edge_dilate_above;
             end
 
             if (frame_start) begin
@@ -534,6 +549,108 @@ module hx_vision_pipeline #(
                     if (pix_x > cur_xmax) cur_xmax <= pix_x;
                     if (pix_y < cur_ymin) cur_ymin <= pix_y;
                     if (pix_y > cur_ymax) cur_ymax <= pix_y;
+                end
+            end
+        end
+    end
+endmodule
+
+// Binary edge postprocessing BEFORE dilation: never feed filled pixels back into
+// the same pass. Two independent windows keep removed speckles out of bridging.
+module hx_edge_binary_refine #(
+    parameter IMAGE_WIDTH = 1280
+) (
+    input wire I_clk, I_rst_n, I_de,
+    input wire [10:0] I_x, I_y,
+    input wire I_edge,
+    output wire O_de,
+    output wire [10:0] O_x,
+    output wire O_edge
+);
+    wire clean_de, clean_edge;
+    wire [10:0] clean_x, clean_y;
+    hx_edge_window5 #(.IMAGE_WIDTH(IMAGE_WIDTH), .BRIDGE(0)) u_clean (
+        .I_clk(I_clk), .I_rst_n(I_rst_n), .I_de(I_de), .I_x(I_x), .I_y(I_y), .I_edge(I_edge),
+        .O_de(clean_de), .O_x(clean_x), .O_y(clean_y), .O_edge(clean_edge)
+    );
+    hx_edge_window5 #(.IMAGE_WIDTH(IMAGE_WIDTH), .BRIDGE(1)) u_bridge (
+        .I_clk(I_clk), .I_rst_n(I_rst_n), .I_de(clean_de), .I_x(clean_x), .I_y(clean_y), .I_edge(clean_edge),
+        .O_de(O_de), .O_x(O_x), .O_y(), .O_edge(O_edge)
+    );
+endmodule
+
+// One 5x5 raster window, four prior rows packed into a 4-bit ERAM.
+// Output uses the current raster slot; window centre is (x-2,y-2).
+// No frame buffer/flush: incomplete top/left windows output zero. Two stages
+// shift interior edge content by 4 rows/columns plus register latency; the
+// bottom/right tail is cropped. Non-edge display modes do not use this data.
+module hx_edge_window5 #(
+    parameter IMAGE_WIDTH = 1280,
+    parameter BRIDGE = 0
+) (
+    input wire I_clk, I_rst_n, I_de,
+    input wire [10:0] I_x, I_y,
+    input wire I_edge,
+    output reg O_de,
+    output reg [10:0] O_x, O_y,
+    output reg O_edge
+);
+    wire active = I_de && (I_x < IMAGE_WIDTH);
+    wire [3:0] line_rd;
+    wire [4:0] right_col = {(I_y >= 4) && line_rd[3], (I_y >= 3) && line_rd[2],
+                            (I_y >= 2) && line_rd[1], (I_y >= 1) && line_rd[0], I_edge};
+    reg [3:0] row0, row1, row2, row3, row4;
+    wire [4:0] w0 = {row0, right_col[4]};
+    wire [4:0] w1 = {row1, right_col[3]};
+    wire [4:0] w2 = {row2, right_col[2]};
+    wire [4:0] w3 = {row3, right_col[1]};
+    wire [4:0] w4 = {row4, right_col[0]};
+
+    hx_eram_line_store #(.DATA_WIDTH(4)) u_rows (
+        .clk(I_clk), .rd_addr(I_x), .wr_addr(I_x),
+        .wr_en(active), .wr_data({line_rd[2:0], I_edge}), .rd_data(line_rd)
+    );
+
+    wire near_any = (|w1[3:1]) || w2[3] || w2[1] || (|w3[3:1]);
+    wire ring_any = (|w0) || (|w4) || w1[4] || w1[0] || w2[4] || w2[0] || w3[4] || w3[0];
+    wire through = (w2[3] && w2[1]) || (w1[2] && w3[2]) ||
+                   (w1[3] && w3[1]) || (w1[1] && w3[3]);
+    // Preserve supported endpoints and through-lines, not only dense blobs.
+    // A lone pixel, isolated pair, or isolated 2x2 patch has no such support.
+    wire clean_pixel = w2[2] && ((near_any && ring_any) || through);
+
+    function bridge_axis;
+        input m2, m1, p1, p2;
+        begin
+            // One empty pixel: opposite endpoints plus one outward support.
+            // Two empty pixels: two samples on one side and one on the other.
+            bridge_axis = (m1 && p1 && (m2 || p2)) ||
+                          (m2 && m1 && p2) || (m2 && p1 && p2);
+        end
+    endfunction
+    wire bridge_pixel = w2[2] ||
+                        bridge_axis(w2[4], w2[3], w2[1], w2[0]) ||
+                        bridge_axis(w0[2], w1[2], w3[2], w4[2]) ||
+                        bridge_axis(w0[4], w1[3], w3[1], w4[0]) ||
+                        bridge_axis(w0[0], w1[1], w3[3], w4[4]);
+
+    always @(posedge I_clk or negedge I_rst_n) begin
+        if (!I_rst_n) begin
+            row0 <= 0; row1 <= 0; row2 <= 0; row3 <= 0; row4 <= 0;
+            O_de <= 0; O_x <= 0; O_y <= 0; O_edge <= 0;
+        end else begin
+            O_de <= active;
+            O_edge <= active && (I_x >= 4) && (I_y >= 4) && (BRIDGE ? bridge_pixel : clean_pixel);
+            if (active) begin
+                O_x <= I_x; O_y <= I_y;
+                if (I_x == 0) begin
+                    row0 <= {3'd0, right_col[4]}; row1 <= {3'd0, right_col[3]};
+                    row2 <= {3'd0, right_col[2]}; row3 <= {3'd0, right_col[1]};
+                    row4 <= {3'd0, right_col[0]};
+                end else begin
+                    row0 <= {row0[2:0], right_col[4]}; row1 <= {row1[2:0], right_col[3]};
+                    row2 <= {row2[2:0], right_col[2]}; row3 <= {row3[2:0], right_col[1]};
+                    row4 <= {row4[2:0], right_col[0]};
                 end
             end
         end

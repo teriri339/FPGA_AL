@@ -1,6 +1,6 @@
 # 边缘检测核心代码整理
 
-整理日期：2026-10-17。依据当前工程实际接入的 RTL，不改变算法、参数或位流。
+整理日期：2026-10-17。依据当前工程实际接入的 RTL。最初仅整理说明；现已同步更新至新增二值边缘清理/连接的版本，具体变更见第 9 节。
 
 ## 1. 看哪份代码
 
@@ -21,6 +21,7 @@ RGB888
   → 按局部亮度选择双阈值
   → 3×3 邻域连接、去孤点、补一像素断点
   → 寄存 edge_core_q
+  → 两级 5×5 去孤立小点簇、定向补 1～2 像素断口
   → 2×2 显示加粗
   → 黑底白线（I_mode == 3）
 ```
@@ -187,15 +188,17 @@ wire edge_core = supported_strong_edge || symmetric_hyst_edge || one_pixel_gap_e
 
 四个方向中，对向两点均为低阈值候选、且至少一侧为强候选时，允许填补中间没有候选的一点。这是本工程额外的连接规则。
 
-## 9. 输出加粗与显示
+## 9. 新增：去小点簇、短断口连接、输出加粗
 
-`edge_core` 先寄存为 `edge_core_q`，再结合上一行边缘和左邻作 2×2 膨胀：
+`edge_core` 先寄存为 `edge_core_q`，然后默认经过 `hx_edge_binary_refine`：先清理无延伸支撑的小点簇，再定向补短断口。两级均采用 5×5 窗口，完整实现仍位于同一个 `.v` 文件内。新逻辑和限制见 [边缘清理与连接](EDGE_REFINEMENT.md)。
+
+`ENABLE_EDGE_REFINEMENT=0` 可恢复原来的旁路路径。默认启用时，加粗输入改为 `refined_edge`，对应扫描坐标为 `refined_x`：
 
 ```verilog
-wire edge_display_pixel = edge_core_q ||
-                          ((edge_x_q != 0) && edge_dilate_left) ||
+wire edge_display_pixel = refined_edge ||
+                          ((refined_x != 0) && edge_dilate_left) ||
                           edge_dilate_above ||
-                          ((edge_x_q != 0) && edge_dilate_above_left);
+                          ((refined_x != 0) && edge_dilate_above_left);
 ```
 
 显示模式选择分支中的原代码：
@@ -204,19 +207,21 @@ wire edge_display_pixel = edge_core_q ||
 2'd3: base_rgb = edge_display_pixel ? 24'hffffff : 24'h000000;
 ```
 
-`edge_core` 是邻域融合结果，`edge_display_pixel` 是加粗后的显示结果。加粗服务于观察，不属于 Sobel 或 NMS 本身。
+`edge_core` 是原邻域融合结果，`refined_edge` 是新增清理/连接后的结果，`edge_display_pixel` 是加粗后的显示结果。加粗服务于观察，不属于 Sobel 或 NMS 本身。
 
 ## 10. 不能漏掉的硬件配套
 
 ### 行缓存
 
-原模块内有三组 `hx_eram_line_store`，底层使用安路 `PH1P_LOGIC_ERAM`：
+原主流水线内有三组 `hx_eram_line_store`，底层使用安路 `PH1P_LOGIC_ERAM`；新增两级清理/连接各有一组 4 位行缓存：
 
 | 实例 | 数据宽度 | 存放内容 |
 | --- | ---: | --- |
 | `u_raw_color_line_store` | 18 位 | 两行原始灰度和一行颜色编码；与颜色识别共用 |
 | `u_edge_line_store` | 46 位 | 两行平滑灰度、两行梯度幅值、一行方向、两行低阈值和两行强候选 |
 | `u_dilate_line_store` | 1 位 | 一行融合边缘，用于 2×2 加粗 |
+| `g_edge_refinement/u_refine/u_clean/u_rows` | 4 位 | 清理阶段的前四行二值边缘 |
+| `g_edge_refinement/u_refine/u_bridge/u_rows` | 4 位 | 连接阶段的前四行已清理边缘 |
 
 每组逻辑深度 2048，地址 11 位。表中为逻辑数据宽度，不能直接当作物理 ERAM 块数。
 
@@ -242,7 +247,7 @@ wire hyst_window_valid = nms_valid && (gaussian_x_d >= 11'd8) && (gaussian_y_d >
 - `edge_core → edge_core_q` 寄存，随后维护加粗窗口；
 - `stage_rgb → O_rgb` 以及显示控制信号寄存。
 
-这些时序逻辑不是可省略的“外围代码”。本文没有把整个视频处理简化成一个固定拍数的组合函数，也没有重新验证或调整边缘相对输入图像的空间偏移。
+这些时序逻辑不是可省略的“外围代码”。本文没有把整个视频处理简化成一个固定拍数的组合函数。新增两级窗口的扫描偏移与边界裁剪已在独立参考模型中验证，详见新增说明；并未把整条原 Canny 路径重新配准到 RGB 输入，不能把边缘位图直接当成与原图同坐标的检测掩膜。
 
 ## 11. 阅读和调试入口
 
@@ -255,6 +260,8 @@ wire hyst_window_valid = nms_valid && (gaussian_x_d >= 11'd8) && (gaussian_y_d >
 | 检测灵敏度 | 六个 `SOBEL_*THRESHOLD*` 参数 |
 | 去孤点、局部连接 | `supported_strong_edge`、`symmetric_hyst_edge` |
 | 补断 | `one_pixel_gap_edge` |
+| 新增小点簇清理 | `hx_edge_window5` 的 `clean_pixel` |
+| 新增短断口连接 | `bridge_axis`、`bridge_pixel` |
 | 最终加粗 | `edge_display_pixel` |
 | 窗口和读写时序 | `edge_line_wr`、`hx_eram_line_store`、时序 `always` 块 |
 
