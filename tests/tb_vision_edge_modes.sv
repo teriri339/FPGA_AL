@@ -12,16 +12,22 @@ module tb_vision_edge_modes;
     wire [23:0] new_pixels, old_pixels;
     wire [7:0] new_luma, old_luma;
     wire [11:0] new_high, old_high, new_low, old_low;
-    hx_vision_pipeline #(.IMAGE_WIDTH(W), .MIN_TARGET_PIXELS(16), .ENABLE_EDGE_REFINEMENT(1)) updated (
+    hx_vision_pipeline #(.ENABLE_RAW_SHARPEN(0),.IMAGE_WIDTH(W), .MIN_TARGET_PIXELS(16), .ENABLE_EDGE_REFINEMENT(1),
+                        .ENABLE_STATUS_OSD(0), .ENABLE_ANLOGIC_LOGO(0)) updated (
         .I_clk(clk), .I_rst_n(rst), .I_vsync(vs), .I_hsync(hs), .I_de(de), .I_user(user), .I_last(last),
-        .I_rgb(rgb), .I_mode(mode), .I_exposure_level(2'd1), .I_auto_exposure(1'b1), .I_cal_status(2'd0),
+        .I_rgb(rgb), .I_mode(mode), .I_exposure_level(2'd1), .I_auto_exposure(1'b1),
+        .I_raw_sharpen_enable(1'b0), .I_template_command(1'b0), .I_applied_exposure(16'd0), .I_applied_gain_regs(24'd0),
+        .I_applied_status(2'd0), .I_applied_has_value(1'b0), .I_applied_update_toggle(1'b0), .I_cal_status(2'd0),
         .O_vsync(new_ctrl[4]), .O_hsync(new_ctrl[3]), .O_de(new_ctrl[2]), .O_user(new_ctrl[1]), .O_last(new_ctrl[0]),
         .O_rgb(new_rgb), .O_target_found(new_found), .O_target_pixels(new_pixels),
         .O_frame_luma(new_luma), .O_frame_highlights(new_high), .O_frame_shadows(new_low), .O_frame_luma_toggle(new_toggle)
     );
-    hx_vision_pipeline #(.IMAGE_WIDTH(W), .MIN_TARGET_PIXELS(16), .ENABLE_EDGE_REFINEMENT(0)) bypassed (
+    hx_vision_pipeline #(.ENABLE_RAW_SHARPEN(0),.IMAGE_WIDTH(W), .MIN_TARGET_PIXELS(16), .ENABLE_EDGE_REFINEMENT(0),
+                        .ENABLE_STATUS_OSD(0), .ENABLE_ANLOGIC_LOGO(0)) bypassed (
         .I_clk(clk), .I_rst_n(rst), .I_vsync(vs), .I_hsync(hs), .I_de(de), .I_user(user), .I_last(last),
-        .I_rgb(rgb), .I_mode(mode), .I_exposure_level(2'd1), .I_auto_exposure(1'b1), .I_cal_status(2'd0),
+        .I_rgb(rgb), .I_mode(mode), .I_exposure_level(2'd1), .I_auto_exposure(1'b1),
+        .I_raw_sharpen_enable(1'b0), .I_template_command(1'b0), .I_applied_exposure(16'd0), .I_applied_gain_regs(24'd0),
+        .I_applied_status(2'd0), .I_applied_has_value(1'b0), .I_applied_update_toggle(1'b0), .I_cal_status(2'd0),
         .O_vsync(old_ctrl[4]), .O_hsync(old_ctrl[3]), .O_de(old_ctrl[2]), .O_user(old_ctrl[1]), .O_last(old_ctrl[0]),
         .O_rgb(old_rgb), .O_target_found(old_found), .O_target_pixels(old_pixels),
         .O_frame_luma(old_luma), .O_frame_highlights(old_high), .O_frame_shadows(old_low), .O_frame_luma_toggle(old_toggle)

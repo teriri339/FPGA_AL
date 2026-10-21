@@ -1,0 +1,2 @@
+# Keep the supplied example ROM byte-identical to the vendor archive.
+reference_edge_project/user_source/hdl_source/hx1p35_port/anlogic_logo_rom.v -text

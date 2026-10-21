@@ -58,7 +58,7 @@ module ddr2
 
   ph1p_ddrmc_wrapper_63f4ac254419
   #(
-      .tCK(1876),
+      .tCK(1875),
       .BK_NUM(2),
       .AC_NUM(4),
       .DX_NUM(2),

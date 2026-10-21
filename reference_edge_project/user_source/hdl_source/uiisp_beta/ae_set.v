@@ -57,7 +57,15 @@ reg [1:0] r_manual_prev = 2'd2; //【HX1P35A-移植适配】同步后手动档�
 (* async_reg = "true" *) reg [11:0] r_highlight_meta = 0, r_highlight_sync = 0; //【HX1P35A-移植适配】帧高光计数两级同步器。
 (* async_reg = "true" *) reg [11:0] r_shadow_meta = 0, r_shadow_sync = 0; //【HX1P35A-移植适配】帧暗部计数两级同步器。
 (* async_reg = "true" *) reg [2:0] r_luma_toggle_sync = 0; //【HX1P35A-移植适配】三级同步用于可靠检测新帧。
-wire w_new_luma = r_luma_toggle_sync[2] ^ r_luma_toggle_sync[1]; //【HX1P35A-移植适配】新亮度数据单周期脉冲。
+// Give the two-stage statistics bus one extra destination cycle to settle.
+// With a bounded CDC data path, a bit may miss the toggle's first sampling
+// edge. Consume on the fourth toggle stage, not alongside the bus's last NBA.
+reg r_luma_toggle_delayed = 0;
+wire w_new_luma = r_luma_toggle_sync[2] ^ r_luma_toggle_delayed;
+always @(posedge I_clk or posedge I_rst) begin
+    if (I_rst) r_luma_toggle_delayed <= 1'b0;
+    else r_luma_toggle_delayed <= r_luma_toggle_sync[2];
+end
 
 always @(posedge I_clk or posedge I_rst) begin
 	if(I_rst) begin
@@ -83,6 +91,9 @@ localparam [11:0] C_HIGHLIGHT_SEVERE = 12'd720; //【HX1P35A-移植适配】约 
 localparam [11:0] C_SHADOW_LARGE = 12'd1800; //【HX1P35A-移植适配】超过约一半画面处于深暗时，优先避免主体和屋顶全黑。
 reg [3:0] r_auto_frame_count = 0; //【HX1P35A-移植适配】每 16 帧最多调整一次，等待传感器和 DDR 画面稳定。
 reg [15:0] r_ae_set = 1990, r_ag_set = 80; //【HX1P35A-移植适配】自动曝光目标快门和增益。
+// Restore the original low-light range after the 6x ceiling proved too dark.
+// Gain is a table index, not a linear multiplier. Manual presets are unchanged.
+localparam [15:0] C_AUTO_GAIN_MAX = 16'd176;
 wire w_highlight_hold = (r_highlight_sync >= C_HIGHLIGHT_HOLD);
 wire w_highlight_reduce = (r_highlight_sync >= C_HIGHLIGHT_REDUCE);
 wire w_highlight_severe = (r_highlight_sync >= C_HIGHLIGHT_SEVERE);
@@ -112,7 +123,9 @@ always @(posedge I_clk or posedge I_rst) begin
 				r_auto_frame_count <= r_auto_frame_count + 1'b1; //【HX1P35A-移植适配】降低调节频率，抑制闪烁。
 			end else begin
 				r_auto_frame_count <= 0; //【HX1P35A-移植适配】普通场景约 0.27 秒、高光过曝约 0.13 秒调整一次。
-				if (w_highlight_severe || ((r_luma_sync > C_LUMA_BRIGHT) && !w_shadow_large)) begin //【HX1P35A-移植适配】仅严重过曝或暗部不占主体时降低曝光。
+				if (r_ag_set > C_AUTO_GAIN_MAX) begin
+					r_ag_set <= (r_ag_set < C_AUTO_GAIN_MAX+16'd4) ? C_AUTO_GAIN_MAX : r_ag_set-16'd4;
+				end else if (w_highlight_severe || ((r_luma_sync > C_LUMA_BRIGHT) && !w_shadow_large)) begin //【HX1P35A-移植适配】仅严重过曝或暗部不占主体时降低曝光。
 					if (r_ag_set > 16'd16)
 						r_ag_set <= (r_ag_set < 16'd20) ? 16'd16 : r_ag_set - 16'd4; //【HX1P35A-移植适配】用半步降低模拟增益，避免暗区突然塌黑。
 					else if (r_ae_set > 16'd300)
@@ -122,13 +135,14 @@ always @(posedge I_clk or posedge I_rst) begin
 						r_ag_set <= (r_ag_set < 16'd20) ? 16'd16 : r_ag_set - 16'd4; //【HX1P35A-移植适配】中等高光且暗部不占主体时温和压低增益。
 					else if (r_ae_set > 16'd300)
 						r_ae_set <= (r_ae_set < 16'd380) ? 16'd300 : r_ae_set - 16'd80;
-				end else if (w_highlight_hold) begin
+				end else if (w_highlight_hold && !(w_shadow_large &&
+				             (r_luma_sync < C_LUMA_DARK) && !w_highlight_reduce)) begin
 					//【HX1P35A-移植适配】亮暗同时较多时保持当前曝光，避免灯具与暗部互相拉扯造成闪烁。
 				end else if (r_luma_sync < C_LUMA_DARK) begin
 					if (r_ae_set < 16'd1990)
 						r_ae_set <= (r_ae_set > 16'd1910) ? 16'd1990 : r_ae_set + 16'd80; //【HX1P35A-移植适配】暗时以半步延长曝光，减小亮区突然削顶。
-					else if (r_ag_set < 16'd176)
-						r_ag_set <= (r_ag_set > 16'd172) ? 16'd176 : r_ag_set + 16'd4; //【HX1P35A-移植适配】曝光到顶后温和增加增益。
+					else if (r_ag_set < C_AUTO_GAIN_MAX)
+						r_ag_set <= (r_ag_set > C_AUTO_GAIN_MAX-16'd4) ? C_AUTO_GAIN_MAX : r_ag_set + 16'd4;
 				end
 			end
 		end

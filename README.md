@@ -1,21 +1,51 @@
 # FPGA_AL：PH1P35A 实时视觉与边缘检测工程
 
+最新独立发布：[时序 / CDC 修复 A](bitstreams/timing_closure_20261021_a/README.md)，烧录 `bitstreams/timing_closure_20261021_a/camera_timing_closure_20261021_a.bit`。经用户同意采用隔离 D 的复位/CDC/DDR 修复，223 个设计文件指纹与验证版一致，40 项仿真、Python 17 项通过。Setup/Hold WNS +0.116/+0.020 ns，STA 覆盖 98.49%，Slice 82.69%、ERAM 92/108、DSP 27/40。新生成位流，尚待上板验证；未覆盖历史文件或原运行数据库，未提交/推送。下面为历史发布记录。
+
+最新独立发布：[快速找回资源优化 A](docs/TEMPLATE_FAST_RESOURCE_OPT.md)，烧录 `bitstreams/local_template_fast_resource_opt_20261020_a/camera_template_fast_resource_opt_20261020_a.bit`。保持原快速找回的精度、范围、门限及处理时延，40位快照打包和地址优化使 ERAM99→95、DSP29→27；Slice18239→18300（86.26%），是少量逻辑换存储余量。35项仿真配置、Python17项和隔离综合/路由通过；Setup/Hold WNS +0.136/+0.020ns，STA覆盖95.86%。新位流待上板，不增加缩放适应；原数据库、历史位流及best_result未覆盖，未提交/推送。下条为上一独立发布。
+
+上一独立发布：[快速粗搜找回 A](docs/TEMPLATE_FAST_REACQUIRE.md)，烧录 `bitstreams/local_template_fast_reacquire_20261020_a/camera_template_fast_reacquire_20261020_a.bit`。320×180 冻结亮度快照粗搜候选、原分辨率精匹配三帧确认，保留近邻与慢速全画面兜底；720p 静态仿真约 0.617 秒恢复，不保证任意实景秒级，也不支持旋转/缩放。33项仿真配置、Python17项及隔离构建通过；Slice85.97%、ERAM99/108、DSP29/40，Setup/Hold WNS +0.252/+0.020ns，STA覆盖95.77%。实板待验收，旧位流及best_result未覆盖，未提交/推送。下条为上一独立发布。
+
+上一独立发布：[低资源分片全画面找回](docs/TEMPLATE_GLOBAL_REACQUIRE.md)，烧录 `bitstreams/local_template_global_reacquire_20261020_a/camera_template_global_reacquire_20261020_a.bit`。前32次失败搜索保留原邻域优先，之后局部/全画面交替；720p共3234个全局窗口，完整轮询理想约108秒另加确认，不是秒级全画面检测，不支持旋转/缩放。26项仿真配置、Python17项及隔离综合/路由通过；Slice83.97%、ERAM71，Setup/Hold WNS=+0.179/+0.020ns，STA覆盖95.82%。新位流实板待验收，历史版本和best_result未覆盖，未提交/推送。
+
+上一独立发布：[近邻优先的扩大找回](docs/TEMPLATE_FAR_REACQUIRE.md)，烧录 `bitstreams/local_template_far_reacquire_20261020_a/camera_template_far_reacquire_20261020_a.bit`。最后位置/中央各自名义约±73个处理像素，保留快速近邻优先、3帧确认，不是全画面或旋转缩放。完整远邻轮询576个失败搜索帧，60fps理想条件约9.6秒另加确认，不保证立即恢复。22项仿真配置、Python17项及隔离综合/路由通过；Slice84.03%、ERAM71，Setup/Hold WNS=+0.316/+0.020ns，STA覆盖95.77%。新位流实板待验收，历史位流保留。
+
+上一独立发布：[功能保持的资源优化](docs/TEMPLATE_RESOURCE_OPT.md)，烧录 `bitstreams/local_template_resource_opt_20261020_a/camera_template_resource_opt_20261020_a.bit`。保留用户已验证扩展A全部功能/参数/时延，搜索块改用专用存储，Slice89.35%→84.36%（省1058）、LUT省1363、ERAM66→71。59011955周期对照、21项仿真配置、Python17项及隔离综合/路由通过；Setup/Hold WNS=+0.337/+0.020ns，STA覆盖95.79%。新位流实板待验收，历史位流和原运行数据库不覆盖，未提交/推送。
+
+上一独立发布：[LOST分阶段邻域找回](docs/TEMPLATE_EXPANDED_REACQUIRE.md)，位流 `bitstreams/local_template_expanded_20261020_a/camera_template_expanded_reacquire_20261020_a.bit` 已由用户实板确认可识别并找回，保留对照。最后位置/中央八方向邻域名义约±25个720p像素、3帧确认，不是全画面找回。
+
+上一独立发布：[模板匹配流水化](docs/TEMPLATE_SAD_PIPELINE.md)，位流 `bitstreams/local_template_sad_pipeline_20261020_a/camera_template_sad_pipeline_20261020_a.bit` 保留对照。RAM预取与连续累加使最长计算38602→13654时钟，不包含本次邻域扩展。
+
+上一独立发布：[模板快速自动找回](docs/TEMPLATE_REACQUIRE.md)，位流 `bitstreams/local_template_reacquire_20261020_a/camera_template_reacquire_20261020_a.bit` 保留对照。LOST后保留原模板，交替搜索最后位置和中央附近，连续3帧确认；不是全画面搜索。
+
+上一独立发布：[小幅移动模板跟踪优化版](docs/TEMPLATE_FINE_TRACKING.md)，位流 `bitstreams/local_template_fine_20261020_d/camera_template_fine_20261020_d.bit`。2像素粗搜和1像素细化、约±9像素；旧fine D在LOST后停止搜索，不含本次自动找回，保留用于历史对比。
+
+上一独立发布：[中央选定与局部模板跟踪原型](docs/LOCAL_TEMPLATE_TRACKING.md)，位流 `bitstreams/local_template_20261020_b/camera_local_template_20261020_b.bit`，原8像素步进、±32像素版本保留用于历史对比。以下Git检查点与10月19日发布条目为历史记录，不代表本次资源基线。
+
 > 当前有效分支：`WZY`
 >
-> 当前功能/资源基线：`a7676fb`（`perf: move vision line buffers to ERAM`）
+> 历史功能/资源检查点：`a7676fb`（`perf: move vision line buffers to ERAM`）
 >
 > 可回退标签：`checkpoint-20261016-eram-linebuffers`
 > 工程状态：完整综合、布局布线和静态时序已经通过；最新位流仍应在实板上回归检查所有显示模式、自动曝光、按键和蜂鸣器。
 
 这是基于安路 PH1P35A 的 SC520 MIPI 摄像头实时视觉工程。工程在参考的摄像头、ISP、DDR 帧缓存和 HDMI 输出链路上，加入了纯 RTL 的原图/灰度/颜色识别/Canny 边缘检测、自动曝光、OSD、按键控制和蜂鸣器告警。
 
-边缘算法阅读入口：[核心代码分阶段整理](docs/EDGE_DETECTION_CORE.md)，按当前实际 RTL 说明灰度、高斯平滑、Sobel、NMS、双阈值、邻域连接和显示加粗。
+边缘算法阅读入口：[核心代码分阶段整理](docs/EDGE_DETECTION_CORE.md)，按当前实际 RTL 说明灰度、高斯平滑、Sobel、NMS、双阈值、邻域连接和显示加粗。新增功能的设计草案见 [运动检测方案](reference_edge_project/MOTION_DETECTION_DESIGN.md)；其中资源估算、AE 补偿和验证目标已标注为待实现/待验证。
 
-最新边缘支路增加 [去孤立小点簇与定向短断口连接](docs/EDGE_REFINEMENT.md)：默认在显示加粗前清理无支撑小点簇，并补四个方向上最多 2 像素的断口；原图、颜色识别和白场补偿不变。新位流 `camera_edge_clean_link_20261017.bit`（17:36:22）已同步到原 `best_result/camera_to_dsi_display.bit`，替换前文件已完整备份；720p 仿真和布局布线通过，尚待实板确认。
+10月19日历史交付为 [RAW 直通恢复版](docs/RAW_RESTORE.md)：`bitstreams/camera_raw_restore_20261019.bit`，2026-10-19 19:55:06 生成，已同步原 `best_result/camera_to_dsi_display.bit`。默认关闭新增显示均值降噪和暗部曲线，恢复 RAW RGB / GRAY 逐像素输出；保留原曝光/增益、白场 V2、Logo/OSD、10 帧保持及 [Canny 轻度抑噪版](docs/CANNY_NOISE_TUNING.md) 门限，不是回退整个工程。完整功能回归及综合/布局布线通过，Setup/Hold WNS +0.186/+0.020 ns；Slice 76.94%、ERAM 56/108、DSP 24/40。实际清晰度恢复程度仍待同场景实板对比，Canny 内部细节本次未调整。
 
-当前默认使用 [白纸残差固定补偿 V2](docs/WHITE_FIELD_PAPER_V2.md)：根据用户烧录旧免操作版后拍摄的两张白纸图，重新拟合残余色偏并与旧表组合，上电直接应用，不需要长按或按键标定。保留动态 AWB、自动曝光和原按键行为。V2 原验证位流生成时间为 2026-10-17 15:55:01；当前 `best_result` 已更新为上述边缘精修版，并保留 V2 补偿。下述资源/时序表仍属于原 ERAM 基线。之前的 [经验补偿 V1](docs/WHITE_FIELD_SOFT_PRESET.md)、[板上自标定](docs/WHITE_FIELD_SELF_CALIBRATION.md) 保留为历史/可选方案。
+用户最新澄清为“相机在动、目标物体静止”。**当前 X/Y/P 仍为颜色检测统计，不是通用目标跟踪**。需先指定/初始化目标，再评估移动相机下的跟踪；不能用颜色阈值或裸帧差代替。需求分析见 [移动相机目标需求](docs/MOVING_CAMERA_REQUIREMENTS.md)。
 
-`RAW` 显示模式的含义是“绕过本工程视觉算法的 RGB 原图”。它**不是**传感器 Bayer RAW10：画面已依次经过 SC520、MIPI、RAW10 解包、demosaic/ISP 和 DDR 帧缓存。因此 RAW 模式中观察到的颜色偏差可用于区分摄像头/ISP 问题与后级算法问题。
+颜色跟踪支持 [有限漏检保持](docs/TARGET_TRACKING_STABILITY.md)：源码默认 10 帧，HOLD=0/1/4/10 的 RTL 仿真已通过；保持期间 OSD 明确显示 HOLD 并保留旧 C/X/Y，P 继续显示本帧实际计数。最新画质位流已包含 10 帧设置；历史存档 `camera_target_tracking_20261017.bit`（20:20:10）仍对应此前 4 帧默认值。
+
+保留 [直接使用安路 Logo 例程代码](docs/EXAMPLE_LOGO.md)：右上调用 `lab_ex3_osd` 原版 `anlogic_logo_rom.v`，保留完整 RGB 和透明规则，不裁剪或量化；左上模式、曝光和颜色目标文字保留。原 Logo 验证位流 `camera_example_logo_20261017.bit`（19:34:55）仍存档，原 `best_result` 现为上述画质优化版。此前 [16 色转换版](docs/LOGO_AND_STATUS_OSD.md) 仅保留为历史。
+
+仍保留 [去孤立小点簇与定向短断口连接](docs/EDGE_REFINEMENT.md)：在显示加粗前清理无支撑小点簇，并补四个方向上最多 2 像素的断口；颜色识别和白场补偿不变。
+
+当前默认使用 [白纸残差固定补偿 V2](docs/WHITE_FIELD_PAPER_V2.md)：根据用户烧录旧免操作版后拍摄的两张白纸图，重新拟合残余色偏并与旧表组合，上电直接应用，不需要长按或按键标定。保留动态 AWB、自动曝光和原按键行为。V2 原验证位流生成时间为 2026-10-17 15:55:01；当前带 Logo/文字的 `best_result` 仍保留 V2 补偿。下述资源/时序表仍属于原 ERAM 基线。之前的 [经验补偿 V1](docs/WHITE_FIELD_SOFT_PRESET.md)、[板上自标定](docs/WHITE_FIELD_SELF_CALIBRATION.md) 保留为历史/可选方案。
+
+`RAW` **不是**传感器 Bayer RAW10：画面仍经过 SC520、MIPI、RAW10 解包、demosaic/ISP、DDR 和白场补偿。当前视觉显示模块已恢复叠加前的逐像素直通；历史[画质增强](docs/PICTURE_QUALITY.md)的 2×2 平均与暗部曲线默认关闭，可选源码保留。自动曝光、手动四档和原 Logo/文字覆盖仍在。
 
 ## 当前版本摘要
 
@@ -91,8 +121,8 @@ SC520
 ### 颜色目标检测和 OSD
 
 - 检测红、绿、蓝三种颜色，使用亮度、通道差和同色邻域一致性三级筛选；绿色门限针对偏暗或偏黄绿印刷物额外放宽。
-- 只有连续成片的颜色候选才进入面积、包围框和告警统计；默认最小目标面积为 `800` 像素。
-- 左上角状态文字 OSD（模式、曝光、目标主颜色、中心坐标和像素面积）默认关闭，避免遮挡画面；`hx_vision_pipeline` 的 `ENABLE_STATUS_OSD` 参数设为 `1` 才会恢复显示。COLOR 模式的黄色目标框不受此开关影响。
+- 只有连续成片的颜色候选才进入面积、包围框和告警统计；默认 `800` 像素获取，锁定后 `400` 像素即可更新，漏检最多保持 `10` 帧。HOLD 显示橙色并保留旧 C/X/Y；P 仍显示实际计数，确认 LOST 后清空 C/X/Y。详见 [跟踪状态语义及验证](docs/TARGET_TRACKING_STABILITY.md)。
+- 左上角状态文字 OSD（模式、曝光、目标主颜色、中心坐标和像素面积）已恢复默认显示，右上角直接使用安路资料包 `lab_ex3_osd` 的原始 Logo ROM 与透明规则。可用 `ENABLE_STATUS_OSD=0`、`ENABLE_ANLOGIC_LOGO=0` 分别关闭；COLOR 模式的黄色目标框不受影响。原例程位置、接入适配与验证见 [原版 Logo 例程接入](docs/EXAMPLE_LOGO.md)。
 - 当前代码**尚未实现 FPS OSD**；后续加入前不要把屏幕上的信息误认为帧率。
 
 ### Canny 风格边缘检测

@@ -206,6 +206,7 @@
             </File>
             <File Path="../user_source/hdl_source/uics500_cfg/uii2c.v">
                 <FileInfo>
+                    <Attr Name="AutoExcluded" Val="true"/>
                     <Attr Name="UsedInSyn" Val="true"/>
                     <Attr Name="UsedInP&R" Val="true"/>
                     <Attr Name="BelongTo" Val="design_1"/>
@@ -309,7 +310,23 @@
                     <Attr Name="CompileOrder" Val="52"/>
                 </FileInfo>
             </File>
+            <File Path="../user_source/hdl_source/hx1p35_port/hx_template_tracker.v">
+                <FileInfo>
+                    <Attr Name="UsedInSyn" Val="true"/>
+                    <Attr Name="UsedInP&R" Val="true"/>
+                    <Attr Name="BelongTo" Val="design_1"/>
+                    <Attr Name="CompileOrder" Val="57"/>
+                </FileInfo>
+            </File>
             <File Path="../user_source/hdl_source/hx1p35_port/hx_vision_pipeline.v">
+                <FileInfo>
+                    <Attr Name="UsedInSyn" Val="true"/>
+                    <Attr Name="UsedInP&R" Val="true"/>
+                    <Attr Name="BelongTo" Val="design_1"/>
+                    <Attr Name="CompileOrder" Val="54"/>
+                </FileInfo>
+            </File>
+            <File Path="../user_source/hdl_source/hx1p35_port/anlogic_logo_rom.v">
                 <FileInfo>
                     <Attr Name="UsedInSyn" Val="true"/>
                     <Attr Name="UsedInP&R" Val="true"/>
@@ -322,7 +339,7 @@
                     <Attr Name="UsedInSyn" Val="true"/>
                     <Attr Name="UsedInP&R" Val="true"/>
                     <Attr Name="BelongTo" Val="design_1"/>
-                    <Attr Name="CompileOrder" Val="54"/>
+                    <Attr Name="CompileOrder" Val="55"/>
                 </FileInfo>
             </File>
             <File Path="../user_source/hdl_source/legacy_port/rgb_analyze.v">
@@ -331,7 +348,7 @@
                     <Attr Name="UsedInSyn" Val="true"/>
                     <Attr Name="UsedInP&R" Val="true"/>
                     <Attr Name="BelongTo" Val="design_1"/>
-                    <Attr Name="CompileOrder" Val="55"/>
+                    <Attr Name="CompileOrder" Val="56"/>
                 </FileInfo>
             </File>
             <File Path="../user_source/hdl_source/legacy_port/video_data_sw.v">
@@ -340,7 +357,7 @@
                     <Attr Name="UsedInSyn" Val="true"/>
                     <Attr Name="UsedInP&R" Val="true"/>
                     <Attr Name="BelongTo" Val="design_1"/>
-                    <Attr Name="CompileOrder" Val="56"/>
+                    <Attr Name="CompileOrder" Val="58"/>
                 </FileInfo>
             </File>
             <File Path="../user_source/hdl_source/legacy_port/rtl/a2b.v">
@@ -349,7 +366,7 @@
                     <Attr Name="UsedInSyn" Val="true"/>
                     <Attr Name="UsedInP&R" Val="true"/>
                     <Attr Name="BelongTo" Val="design_1"/>
-                    <Attr Name="CompileOrder" Val="57"/>
+                    <Attr Name="CompileOrder" Val="59"/>
                 </FileInfo>
             </File>
             <File Path="../user_source/hdl_source/legacy_port/rtl/debounce.v">
@@ -358,7 +375,7 @@
                     <Attr Name="UsedInSyn" Val="true"/>
                     <Attr Name="UsedInP&R" Val="true"/>
                     <Attr Name="BelongTo" Val="design_1"/>
-                    <Attr Name="CompileOrder" Val="58"/>
+                    <Attr Name="CompileOrder" Val="60"/>
                 </FileInfo>
             </File>
             <File Path="../user_source/hdl_source/legacy_port/rtl/delay_rdy.v">
@@ -367,7 +384,7 @@
                     <Attr Name="UsedInSyn" Val="true"/>
                     <Attr Name="UsedInP&R" Val="true"/>
                     <Attr Name="BelongTo" Val="design_1"/>
-                    <Attr Name="CompileOrder" Val="59"/>
+                    <Attr Name="CompileOrder" Val="61"/>
                 </FileInfo>
             </File>
             <File Path="../user_source/hdl_source/legacy_port/rtl/flash_max.v">
@@ -376,7 +393,7 @@
                     <Attr Name="UsedInSyn" Val="true"/>
                     <Attr Name="UsedInP&R" Val="true"/>
                     <Attr Name="BelongTo" Val="design_1"/>
-                    <Attr Name="CompileOrder" Val="60"/>
+                    <Attr Name="CompileOrder" Val="62"/>
                 </FileInfo>
             </File>
             <File Path="../user_source/hdl_source/legacy_port/rtl/freq_test_value.v">
@@ -385,7 +402,7 @@
                     <Attr Name="UsedInSyn" Val="true"/>
                     <Attr Name="UsedInP&R" Val="true"/>
                     <Attr Name="BelongTo" Val="design_1"/>
-                    <Attr Name="CompileOrder" Val="61"/>
+                    <Attr Name="CompileOrder" Val="63"/>
                 </FileInfo>
             </File>
             <File Path="../user_source/hdl_source/legacy_port/rtl/hs_gen.v">
@@ -394,7 +411,7 @@
                     <Attr Name="UsedInSyn" Val="true"/>
                     <Attr Name="UsedInP&R" Val="true"/>
                     <Attr Name="BelongTo" Val="design_1"/>
-                    <Attr Name="CompileOrder" Val="62"/>
+                    <Attr Name="CompileOrder" Val="64"/>
                 </FileInfo>
             </File>
             <File Path="../user_source/hdl_source/legacy_port/rtl/lvds_data.v">
@@ -403,7 +420,7 @@
                     <Attr Name="UsedInSyn" Val="true"/>
                     <Attr Name="UsedInP&R" Val="true"/>
                     <Attr Name="BelongTo" Val="design_1"/>
-                    <Attr Name="CompileOrder" Val="63"/>
+                    <Attr Name="CompileOrder" Val="65"/>
                 </FileInfo>
             </File>
             <File Path="../user_source/hdl_source/legacy_port/rtl/muxvs.v">
@@ -412,7 +429,7 @@
                     <Attr Name="UsedInSyn" Val="true"/>
                     <Attr Name="UsedInP&R" Val="true"/>
                     <Attr Name="BelongTo" Val="design_1"/>
-                    <Attr Name="CompileOrder" Val="64"/>
+                    <Attr Name="CompileOrder" Val="66"/>
                 </FileInfo>
             </File>
             <File Path="../user_source/hdl_source/legacy_port/rtl/para.v">
@@ -421,7 +438,7 @@
                     <Attr Name="UsedInSyn" Val="true"/>
                     <Attr Name="UsedInP&R" Val="true"/>
                     <Attr Name="BelongTo" Val="design_1"/>
-                    <Attr Name="CompileOrder" Val="65"/>
+                    <Attr Name="CompileOrder" Val="67"/>
                 </FileInfo>
             </File>
             <File Path="../user_source/hdl_source/legacy_port/rtl/portadd.v">
@@ -430,7 +447,7 @@
                     <Attr Name="UsedInSyn" Val="true"/>
                     <Attr Name="UsedInP&R" Val="true"/>
                     <Attr Name="BelongTo" Val="design_1"/>
-                    <Attr Name="CompileOrder" Val="66"/>
+                    <Attr Name="CompileOrder" Val="68"/>
                 </FileInfo>
             </File>
             <File Path="../user_source/hdl_source/legacy_port/rtl/vs_gen.v">
@@ -439,7 +456,7 @@
                     <Attr Name="UsedInSyn" Val="true"/>
                     <Attr Name="UsedInP&R" Val="true"/>
                     <Attr Name="BelongTo" Val="design_1"/>
-                    <Attr Name="CompileOrder" Val="67"/>
+                    <Attr Name="CompileOrder" Val="69"/>
                 </FileInfo>
             </File>
             <File Path="../user_source/hdl_source/legacy_port/rtl/yuv_rgb.v">
@@ -448,7 +465,7 @@
                     <Attr Name="UsedInSyn" Val="true"/>
                     <Attr Name="UsedInP&R" Val="true"/>
                     <Attr Name="BelongTo" Val="design_1"/>
-                    <Attr Name="CompileOrder" Val="68"/>
+                    <Attr Name="CompileOrder" Val="70"/>
                 </FileInfo>
             </File>
         </Verilog>

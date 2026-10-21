@@ -123,11 +123,13 @@ end
 
 | 局部灰度条件 | 弱候选阈值 | 强候选阈值 |
 | --- | ---: | ---: |
-| `top_d2 < 96` | 40 | 72 |
-| `96 <= top_d2 < 176` | 60 | 96 |
-| `top_d2 >= 176` | 64 | 112 |
+| `top_d2 < 96` | 48 | 80 |
+| `96 <= top_d2 < 176` | 64 | 104 |
+| `top_d2 >= 176` | 68 | 120 |
 
 这些是梯度幅值阈值，不是原图的灰度阈值。
+
+2026-10-19 按用户要求轻度抑噪，小幅提高六个默认门限；曝光和增益不变，前后对照见 [Canny 轻度抑噪](CANNY_NOISE_TUNING.md)。
 
 ```verilog
 wire local_dark_region = (top_d2 < 8'd96);
@@ -208,6 +210,8 @@ wire edge_display_pixel = refined_edge ||
 ```
 
 `edge_core` 是原邻域融合结果，`refined_edge` 是新增清理/连接后的结果，`edge_display_pixel` 是加粗后的显示结果。加粗服务于观察，不属于 Sobel 或 NMS 本身。
+
+显示末端现已默认恢复状态文字并直接调用原例程安路 Logo ROM，因此最终 CANNY 画面不再每个像素都是黑白；这些彩色叠加不进入边缘计算。独立验证边缘位图时可关闭 `ENABLE_STATUS_OSD` 和 `ENABLE_ANLOGIC_LOGO`，详见 [原例程显示叠加](EXAMPLE_LOGO.md)。为适配原组合 ROM，显示数据/坐标/控制统一经过预取、查表、叠加三级，对边缘计算和 DDR 读时序没有修改。
 
 ## 10. 不能漏掉的硬件配套
 

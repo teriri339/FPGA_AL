@@ -1,0 +1,555 @@
+diff --git a/reference_edge_project/user_source/hdl_source/design_top_wrapper.v b/reference_edge_project/user_source/hdl_source/design_top_wrapper.v
+index 029db43..58aa290 100644
+--- a/reference_edge_project/user_source/hdl_source/design_top_wrapper.v
++++ b/reference_edge_project/user_source/hdl_source/design_top_wrapper.v
+@@ -117,6 +117,7 @@ module design_top_wrapper #(
+     wire        S_hdmi_serial_clk;
+     wire        S_hdmi_rst_n;
+     wire        S_video_out_rst_n;
++    wire S_cfg_rst_n, S_csi_logic_rst_n, S_ddr_logic_rst_n, S_lp_rst_n;
+ 
+ 
+     wire        S_vi_128b_frame_start;
+@@ -255,7 +256,12 @@ module design_top_wrapper #(
+ 	
+ 	
+     assign S_rst_n 		= S_pll_lock && I_rst_n; //【HX1P35A-移植适配】板载 KEY1 同步控制全局低有效复位。
+-    assign S_hdmi_rst_n = S_pll_lock && I_rst_n; //【HX1P35A-移植适配】HDMI/视觉流水线同时响应板载复位键。
++    // Isolated closure experiment: reset assertion shared; release per domain.
++    hx_reset_release u_reset_cfg(S_24m_clk,S_rst_n,S_cfg_rst_n);
++    hx_reset_release u_reset_csi(S_csi_rx_clk,S_rst_n,S_csi_logic_rst_n);
++    hx_reset_release u_reset_ddr(S_ddr_clk,S_rst_n,S_ddr_logic_rst_n);
++    hx_reset_release u_reset_hdmi(S_hdmi_pixel_clk,S_rst_n,S_hdmi_rst_n);
++    hx_reset_release u_reset_lp(S_100m_clk,S_rst_n,S_lp_rst_n);
+ 
+     //【HX1P35A-移植适配】目标由无到有时播放一次约 1s 的 2kHz 告警音；目标持续存在不会反复触发。
+     always @(posedge S_hdmi_pixel_clk or negedge S_hdmi_rst_n) begin
+@@ -286,92 +292,92 @@ module design_top_wrapper #(
+         end
+     end
+ 
+-    always @(posedge S_csi_rx_clk or negedge S_rst_n) begin
+-        if(!S_rst_n)
++    always @(posedge S_csi_rx_clk or negedge S_csi_logic_rst_n) begin
++        if(!S_csi_logic_rst_n)
+             S_dbg_raw_seen <= 1'b0;
+         else if(S_raw10_frame_start | S_axis_tvalid)
+             S_dbg_raw_seen <= 1'b1;
+     end
+ 
+-    always @(posedge S_csi_rx_clk or negedge S_rst_n) begin
+-        if(!S_rst_n)
++    always @(posedge S_csi_rx_clk or negedge S_csi_logic_rst_n) begin
++        if(!S_csi_logic_rst_n)
+             S_dbg_isp_seen <= 1'b0;
+         else if(S_ISP_O_tuser | S_ISP_O_tvalid)
+             S_dbg_isp_seen <= 1'b1;
+     end
+ 
+-    always @(posedge S_ddr_clk or negedge S_rst_n) begin
+-        if(!S_rst_n)
++    always @(posedge S_ddr_clk or negedge S_ddr_logic_rst_n) begin
++        if(!S_ddr_logic_rst_n)
+             S_dbg_ddr_wr_seen <= 1'b0;
+         else if(S_vi_ddr_wr_en)
+             S_dbg_ddr_wr_seen <= 1'b1;
+     end
+ 
+-    always @(posedge S_ddr_clk or negedge S_rst_n) begin
+-        if(!S_rst_n)
++    always @(posedge S_ddr_clk or negedge S_ddr_logic_rst_n) begin
++        if(!S_ddr_logic_rst_n)
+             S_dbg_ddr_rd_seen <= 1'b0;
+         else if(S_ddr_user_rd_valid)
+             S_dbg_ddr_rd_seen <= 1'b1;
+     end
+ 
+-    always @(posedge S_24m_clk or negedge S_rst_n) begin
+-        if(!S_rst_n)
++    always @(posedge S_24m_clk or negedge S_cfg_rst_n) begin
++        if(!S_cfg_rst_n)
+             S_dbg_cam_cfg_seen <= 1'b0;
+         else if(S_cam_cfg_done)
+             S_dbg_cam_cfg_seen <= 1'b1;
+     end
+ 
+-    always @(posedge S_csi_rx_clk or negedge S_rst_n) begin
+-        if(!S_rst_n)
++    always @(posedge S_csi_rx_clk or negedge S_csi_logic_rst_n) begin
++        if(!S_csi_logic_rst_n)
+             S_dbg_hs_seen <= 1'b0;
+         else if(S_hs_rx_valid)
+             S_dbg_hs_seen <= 1'b1;
+     end
+ 
+-    always @(posedge S_csi_rx_clk or negedge S_rst_n) begin
+-        if(!S_rst_n)
++    always @(posedge S_csi_rx_clk or negedge S_csi_logic_rst_n) begin
++        if(!S_csi_logic_rst_n)
+             S_dbg_csi_seen <= 1'b0;
+         else if(S_csi_frame_start | S_csi_valid)
+             S_dbg_csi_seen <= 1'b1;
+     end
+ 
+-    always @(posedge S_csi_rx_clk or negedge S_rst_n) begin
+-        if(!S_rst_n)
++    always @(posedge S_csi_rx_clk or negedge S_csi_logic_rst_n) begin
++        if(!S_csi_logic_rst_n)
+             S_dbg_raw10_seen <= 1'b0;
+         else if(S_raw10_frame_start | S_raw10_valid)
+             S_dbg_raw10_seen <= 1'b1;
+     end
+ 
+-    always @(posedge S_csi_rx_clk or negedge S_rst_n) begin
+-        if(!S_rst_n)
++    always @(posedge S_csi_rx_clk or negedge S_csi_logic_rst_n) begin
++        if(!S_csi_logic_rst_n)
+             S_dbg_isp_fs_seen <= 1'b0;
+         else if(S_ISP_O_tuser)
+             S_dbg_isp_fs_seen <= 1'b1;
+     end
+ 
+-    always @(posedge S_csi_rx_clk or negedge S_rst_n) begin
+-        if(!S_rst_n)
++    always @(posedge S_csi_rx_clk or negedge S_csi_logic_rst_n) begin
++        if(!S_csi_logic_rst_n)
+             S_dbg_isp_valid_seen <= 1'b0;
+         else if(S_ISP_O_tvalid)
+             S_dbg_isp_valid_seen <= 1'b1;
+     end
+ 
+-    always @(posedge S_ddr_clk or negedge S_rst_n) begin
+-        if(!S_rst_n)
++    always @(posedge S_ddr_clk or negedge S_ddr_logic_rst_n) begin
++        if(!S_ddr_logic_rst_n)
+             S_dbg_ddr_req_seen <= 1'b0;
+         else if(S_vi_ddr_wr_en)
+             S_dbg_ddr_req_seen <= 1'b1;
+     end
+ 
+-    always @(posedge S_ddr_clk or negedge S_rst_n) begin
+-        if(!S_rst_n)
++    always @(posedge S_ddr_clk or negedge S_ddr_logic_rst_n) begin
++        if(!S_ddr_logic_rst_n)
+             S_dbg_ddr_ready_seen <= 1'b0;
+         else if(S_ddr_user_ready)
+             S_dbg_ddr_ready_seen <= 1'b1;
+     end
+ 
+-    always @(posedge S_ddr_clk or negedge S_video_out_rst_n) begin
+-        if(!S_video_out_rst_n)
++    always @(posedge S_ddr_clk or negedge S_ddr_logic_rst_n) begin
++        if(!S_ddr_logic_rst_n)
+             S_dbg_rd_req_seen <= 1'b0;
+         else if(S_video_out_vsync)
+             S_dbg_rd_req_seen <= 1'b0;
+@@ -379,8 +385,8 @@ module design_top_wrapper #(
+             S_dbg_rd_req_seen <= 1'b1;
+     end
+ 
+-    always @(posedge S_ddr_clk or negedge S_video_out_rst_n) begin
+-        if(!S_video_out_rst_n)
++    always @(posedge S_ddr_clk or negedge S_ddr_logic_rst_n) begin
++        if(!S_ddr_logic_rst_n)
+             S_dbg_rd_valid_seen <= 1'b0;
+         else if(S_video_out_vsync)
+             S_dbg_rd_valid_seen <= 1'b0;
+@@ -388,8 +394,8 @@ module design_top_wrapper #(
+             S_dbg_rd_valid_seen <= 1'b1;
+     end
+ 
+-    always @(posedge S_hdmi_pixel_clk or negedge S_video_out_rst_n) begin
+-        if(!S_video_out_rst_n)
++    always @(posedge S_hdmi_pixel_clk or negedge S_hdmi_rst_n) begin
++        if(!S_hdmi_rst_n)
+             S_dbg_rd_nonzero_seen <= 1'b0;
+         else if(S_video_out_vsync)
+             S_dbg_rd_nonzero_seen <= 1'b0;
+@@ -397,29 +403,29 @@ module design_top_wrapper #(
+             S_dbg_rd_nonzero_seen <= 1'b1;
+     end
+ 
+-    always @(posedge S_ddr_clk or negedge S_rst_n) begin
+-        if(!S_rst_n)
++    always @(posedge S_ddr_clk or negedge S_ddr_logic_rst_n) begin
++        if(!S_ddr_logic_rst_n)
+             S_dbg_mc_init_seen <= 1'b0;
+         else if(S_init_calib_complete)
+             S_dbg_mc_init_seen <= 1'b1;
+     end
+ 
+-    always @(posedge S_ddr_clk or negedge S_rst_n) begin
+-        if(!S_rst_n)
++    always @(posedge S_ddr_clk or negedge S_ddr_logic_rst_n) begin
++        if(!S_ddr_logic_rst_n)
+             S_dbg_mc_app_rdy_seen <= 1'b0;
+         else if(S_mc_dbg_app_rdy)
+             S_dbg_mc_app_rdy_seen <= 1'b1;
+     end
+ 
+-    always @(posedge S_ddr_clk or negedge S_rst_n) begin
+-        if(!S_rst_n)
++    always @(posedge S_ddr_clk or negedge S_ddr_logic_rst_n) begin
++        if(!S_ddr_logic_rst_n)
+             S_dbg_mc_wdf_rdy_seen <= 1'b0;
+         else if(S_mc_dbg_wdf_rdy)
+             S_dbg_mc_wdf_rdy_seen <= 1'b1;
+     end
+ 
+-    always @(posedge S_ddr_clk or negedge S_rst_n) begin
+-        if(!S_rst_n)
++    always @(posedge S_ddr_clk or negedge S_ddr_logic_rst_n) begin
++        if(!S_ddr_logic_rst_n)
+             S_dbg_mc_cmd_pop_seen <= 1'b0;
+         else if(S_mc_dbg_cmd_pop)
+             S_dbg_mc_cmd_pop_seen <= 1'b1;
+@@ -492,8 +498,8 @@ module design_top_wrapper #(
+     };
+ 	
+ 	//【HX1P35A-移植适配】SC520 上电后先保持 PWDNB/XSHUTDN 为低，再释放并等待内部上电完成。
+-	always @(posedge S_24m_clk or negedge S_pll_lock) begin //【HX1P35A-移植适配】
+-		if (!S_pll_lock) begin //【HX1P35A-移植适配】
++	always @(posedge S_24m_clk or negedge S_cfg_rst_n) begin //【HX1P35A-移植适配】
++		if (!S_cfg_rst_n) begin //【HX1P35A-移植适配】
+ 			S_cam_power_cnt <= 18'd0; //【HX1P35A-移植适配】
+ 			S_cam_pwdnb <= 1'b0; //【HX1P35A-移植适配】
+ 			S_cam_i2c_ready <= 1'b0; //【HX1P35A-移植适配】
+@@ -533,7 +539,7 @@ module design_top_wrapper #(
+   
+   ae_set u_ae_set (
+       .I_clk(S_24m_clk),
+-      .I_rst(~S_rst_n),
++      .I_rst(~S_cfg_rst_n),
+       .I_btn(4'b1111), //【HX1P35A-移植适配】实体按键专用于视觉控制，避免切换模式时同时改变摄像头曝光。
+       .I_auto_enable(S_auto_exposure), //【HX1P35A-移植适配】自动/手动曝光状态在 ae_set 内同步到 24 MHz 域。
+       .I_manual_exposure_level(S_exposure_level), //【HX1P35A-移植适配】自动关闭时使用 KEY3 选择的固定档位。
+@@ -638,7 +644,7 @@ module design_top_wrapper #(
+  //csi 解码为RAW数据
+ csi_unpacket_2lane u_csi_unpacket(
+ .I_clk                 ( S_csi_rx_clk       ),
+-.I_rst_n               ( S_rst_n        	),
++.I_rst_n               ( S_csi_logic_rst_n        	),
+ .I_hs_valid            ( S_hs_rx_valid     ),
+ .I_hs_data             ( S_hs_rx_data      ),
+ 
+@@ -652,7 +658,7 @@ csi_unpacket_2lane u_csi_unpacket(
+ //解码为RAW8
+ raw10_unpacket_2lane u_raw10_unpacket (
+ .I_clk  (S_csi_rx_clk),
+-.I_rst_n(S_rst_n),
++.I_rst_n(S_csi_logic_rst_n),
+ 
+ .I_csi_frame_start(S_csi_frame_start),
+ .I_csi_frame_end  (S_csi_frame_end),
+@@ -674,7 +680,7 @@ uial2axis #(
+ ) 
+ u_uial2axis (
+ .I_native_clk(S_csi_rx_clk),
+-.I_rst_n     (S_rst_n),
++.I_rst_n     (S_csi_logic_rst_n),
+ .I_data      (S_raw10_data       ),
+ .I_data_valid(S_raw10_valid      ),
+ .I_data_start(S_raw10_frame_start),
+@@ -716,7 +722,7 @@ assign S_raw_tuser  = S_axis_tuser;
+ //ISP算法顶层模块
+ isp_top #(.FIXED_AWB(WHITE_FIELD_FIXED_AWB)) u_isp_top (
+ .axi4s_video_aclk(S_csi_rx_clk),
+-.I_rst_n         (S_rst_n),
++.I_rst_n         (S_csi_logic_rst_n),
+ .I_tlast         (S_raw_tlast	),
+ .I_tuser         (S_raw_tuser	),
+ .I_tdata         (S_raw_tdata	),
+@@ -764,7 +770,7 @@ isp_top #(.FIXED_AWB(WHITE_FIELD_FIXED_AWB)) u_isp_top (
+     assign S_ddr_user_wr_data  = S_vi_ddr_wr_data;
+ 
+ 
+-    assign S_video_out_rst_n = S_hdmi_rst_n;
++    assign S_video_out_rst_n = S_ddr_logic_rst_n;
+ 
+     video_out u_video_out(
+         .I_rst_n             ( S_video_out_rst_n    ),
+@@ -832,7 +838,7 @@ isp_top #(.FIXED_AWB(WHITE_FIELD_FIXED_AWB)) u_isp_top (
+ 
+     mc_to_user_interface u_mc_to_user_interface(
+         .I_clk                   ( S_ddr_clk               ),
+-        .I_rst_n                 ( S_rst_n                 ),
++        .I_rst_n                 ( S_ddr_logic_rst_n                 ),
+ 
+         .I_ddr_user_wr_en        ( S_ddr_user_wr_en        ),
+         .I_ddr_user_rd_en        ( S_ddr_user_rd_en        ),
+@@ -859,8 +865,8 @@ isp_top #(.FIXED_AWB(WHITE_FIELD_FIXED_AWB)) u_isp_top (
+ 
+ 
+     ph1p35_324_ddr_wrapper u_ph1p35_324_ddr_wrapper(
+-        .I_sys_clk              ( I_sys_clk              ),
+-        .I_sys_rst_n            ( S_rst_n                ),
++        .I_sys_clk              ( S_100m_clk             ),
++        .I_sys_rst_n            ( S_lp_rst_n             ),
+ 
+         .O_ddr_clk              ( S_ddr_clk              ),
+         .O_init_calib_complete  ( S_init_calib_complete  ),
+diff --git a/reference_edge_project/user_source/hdl_source/video_in.v b/reference_edge_project/user_source/hdl_source/video_in.v
+index 6aab532..6cc5506 100644
+--- a/reference_edge_project/user_source/hdl_source/video_in.v
++++ b/reference_edge_project/user_source/hdl_source/video_in.v
+@@ -22,6 +22,9 @@ module video_in (
+     input wire         I_ddr_user_ready
+ );
+ 
++    wire I_camera_rst_n, I_ddr_rst_n;
++    hx_reset_release u_reset_camera(I_camera_clk,I_rst_n,I_camera_rst_n);
++    hx_reset_release u_reset_ddr(I_ddr_clk,I_rst_n,I_ddr_rst_n);
+     wire        S_fifo_rst;
+     reg         S_camera_frame_start_extend; ///脉冲展宽，同步到ddr_clk时钟域
+     reg[3:0]    S_extend_cnt;
+@@ -69,8 +72,8 @@ module video_in (
+     );
+ 
+ 
+-    always @(posedge I_camera_clk or negedge I_rst_n) begin
+-        if(!I_rst_n)
++    always @(posedge I_camera_clk or negedge I_camera_rst_n) begin
++        if(!I_camera_rst_n)
+             S_camera_frame_start_extend <= 1'b0;
+         else
+             if(I_camera_frame_start)
+@@ -101,8 +104,8 @@ module video_in (
+ 	/*
+ 		如果前一帧图像有误少行了，那么地址回退为之前的，覆盖有问题的那帧图像
+ 	*/
+-    always @(posedge I_ddr_clk or negedge I_rst_n) begin
+-        if(!I_rst_n)
++    always @(posedge I_ddr_clk or negedge I_ddr_rst_n) begin
++        if(!I_ddr_rst_n)
+             S_video_in_wp <= 'd0;
+         else
+             if(I_display_pause)
+@@ -119,8 +122,8 @@ module video_in (
+     end
+ 
+ 
+-    always @(posedge I_ddr_clk or negedge I_rst_n) begin
+-        if(!I_rst_n)
++    always @(posedge I_ddr_clk or negedge I_ddr_rst_n) begin
++        if(!I_ddr_rst_n)
+             O_video_out_rp <= 'd0;
+         else
+             if(I_display_pause)
+@@ -141,8 +144,8 @@ module video_in (
+     /*
+         fifo的深度是512，实际的深度是510，因此需要注意每次读出的长度避免为256，否则连续两次读写会引起fifo读空，丢失数据
+     */
+-    always @(posedge I_ddr_clk or negedge I_rst_n) begin
+-        if(!I_rst_n)
++    always @(posedge I_ddr_clk or negedge I_ddr_rst_n) begin
++        if(!I_ddr_rst_n)
+             S_ddr_wr_valid <= 1'b0;
+         else
+             if(S_ddr_wr_valid && I_ddr_user_ready && S_ddr_wr_cnt == 'd239)
+@@ -174,8 +177,8 @@ module video_in (
+ 	/*
+ 		如果前一帧图像有误少行了，那么地址回退为之前的，覆盖有问题的那帧图像
+ 	*/
+-    always @(posedge I_ddr_clk or negedge I_rst_n) begin
+-        if(!I_rst_n)
++    always @(posedge I_ddr_clk or negedge I_ddr_rst_n) begin
++        if(!I_ddr_rst_n)
+             O_ddr_user_addr <= 1'b0;
+         else
+             if(S_frame_start && (!I_mipi_rx_error))
+diff --git a/reference_edge_project/user_source/hdl_source/lane_lvds_10_1.v b/reference_edge_project/user_source/hdl_source/lane_lvds_10_1.v
+index 9ad518b..b346abf 100644
+--- a/reference_edge_project/user_source/hdl_source/lane_lvds_10_1.v
++++ b/reference_edge_project/user_source/hdl_source/lane_lvds_10_1.v
+@@ -13,6 +13,10 @@ module lane_lvds_10_1 #(
+     output wire     O_serial_out
+ );
+ 
++    wire S_serial_rst_n;
++    wire S_serial_rst=~S_serial_rst_n;
++    hx_reset_release u_serial_reset(I_serial_clk,~I_rst,S_serial_rst_n);
++
+     reg      S_odd_even;     
+     reg      S_odd_even_1d;  
+     reg      S_odd_even_2d;  
+@@ -30,19 +34,21 @@ module lane_lvds_10_1 #(
+             S_odd_even <= ~S_odd_even;
+     end
+ 
+-    always @(posedge I_serial_clk) begin
+-        S_odd_even_1d <= S_odd_even;
+-        S_odd_even_2d <= S_odd_even_1d;
++    always @(posedge I_serial_clk or posedge S_serial_rst) begin
++        if(S_serial_rst) begin S_odd_even_1d<=0; S_odd_even_2d<=0; end
++        else begin S_odd_even_1d<=S_odd_even; S_odd_even_2d<=S_odd_even_1d; end
+     end
+ 
+-    always @(posedge I_serial_clk) begin
+-        S_load_en    <= S_odd_even_1d ^ S_odd_even_2d;
+-        S_load_en_1d <= S_load_en;
+-        S_load_en_2d <= S_load_en_1d;
++    always @(posedge I_serial_clk or posedge S_serial_rst) begin
++        if(S_serial_rst) begin S_load_en<=0; S_load_en_1d<=0; S_load_en_2d<=0; end
++        else begin
++            S_load_en<=S_odd_even_1d ^ S_odd_even_2d;
++            S_load_en_1d<=S_load_en; S_load_en_2d<=S_load_en_1d;
++        end
+     end
+ 
+-    always @(posedge I_serial_clk or posedge I_rst) begin
+-        if(I_rst)
++    always @(posedge I_serial_clk or posedge S_serial_rst) begin
++        if(S_serial_rst)
+             S_shift_data <= 'd0;
+         else
+             if(S_load_en_2d)
+@@ -51,8 +57,9 @@ module lane_lvds_10_1 #(
+                 S_shift_data <= S_shift_data << 2;
+     end
+ 
+-    always @(posedge I_serial_clk) begin
+-        S_oddr_data <= S_shift_data[9:8];
++    always @(posedge I_serial_clk or posedge S_serial_rst) begin
++        if(S_serial_rst) S_oddr_data<=0;
++        else S_oddr_data<=S_shift_data[9:8];
+     end
+ 
+     generate
+@@ -60,7 +67,7 @@ module lane_lvds_10_1 #(
+             begin
+                 EF2_LOGIC_ODDR U_EG4_ODDR(
+                     .clk   ( I_serial_clk   ),
+-                    .rst   ( I_rst          ),
++                    .rst   ( S_serial_rst          ),
+ 
+                     .d1    ( S_oddr_data[0] ),
+                     .d0    ( S_oddr_data[1] ),
+@@ -72,7 +79,7 @@ module lane_lvds_10_1 #(
+             begin
+                 EF3_LOGIC_ODDR U_EG4_ODDR(
+                     .clk   ( I_serial_clk   ),
+-                    .rst   ( I_rst          ),
++                    .rst   ( S_serial_rst          ),
+ 
+                     .d1    ( S_oddr_data[0] ),
+                     .d0    ( S_oddr_data[1] ),
+@@ -84,7 +91,7 @@ module lane_lvds_10_1 #(
+             begin
+                 EF4_LOGIC_ODDR U_EG4_ODDR(
+                     .clk   ( I_serial_clk   ),
+-                    .rst   ( I_rst          ),
++                    .rst   ( S_serial_rst          ),
+ 
+                     .d1    ( S_oddr_data[0] ),
+                     .d0    ( S_oddr_data[1] ),
+@@ -96,7 +103,7 @@ module lane_lvds_10_1 #(
+             begin
+                 SF1_LOGIC_ODDR U_EG4_ODDR(
+                     .clk   ( I_serial_clk   ),
+-                    .rst   ( I_rst          ),
++                    .rst   ( S_serial_rst          ),
+ 
+                     .d1    ( S_oddr_data[0] ),
+                     .d0    ( S_oddr_data[1] ),
+@@ -108,7 +115,7 @@ module lane_lvds_10_1 #(
+             begin
+                 EG_LOGIC_ODDR U_EG4_ODDR(
+                     .clk   ( I_serial_clk   ),
+-                    .rst   ( I_rst          ),
++                    .rst   ( S_serial_rst          ),
+ 
+                     .d1    ( S_oddr_data[0] ),
+                     .d0    ( S_oddr_data[1] ),
+@@ -120,7 +127,7 @@ module lane_lvds_10_1 #(
+             begin
+                 PH1_LOGIC_ODDR U_EG4_ODDR(
+                     .clk   ( I_serial_clk   ),
+-                    .rst   ( I_rst          ),
++                    .rst   ( S_serial_rst          ),
+ 
+                     .d1    ( S_oddr_data[0] ),
+                     .d0    ( S_oddr_data[1] ),
+@@ -132,7 +139,7 @@ module lane_lvds_10_1 #(
+             begin
+                 PH1P_LOGIC_ODDR U_EG4_ODDR(
+                     .clk   ( I_serial_clk   ),
+-                    .rst   ( I_rst          ),
++                    .rst   ( S_serial_rst          ),
+ 
+                     .d1    ( S_oddr_data[0] ),
+                     .d0    ( S_oddr_data[1] ),
+@@ -144,7 +151,7 @@ module lane_lvds_10_1 #(
+             begin
+                 DR1_LOGIC_ODDR U_EG4_ODDR(
+                     .clk   ( I_serial_clk   ),
+-                    .rst   ( I_rst          ),
++                    .rst   ( S_serial_rst          ),
+ 
+                     .d1    ( S_oddr_data[0] ),
+                     .d0    ( S_oddr_data[1] ),
+diff --git a/reference_edge_project/td_project/camera_to_dsi_display.sdc b/reference_edge_project/td_project/camera_to_dsi_display.sdc
+index 54a6346..402e84d 100644
+--- a/reference_edge_project/td_project/camera_to_dsi_display.sdc
++++ b/reference_edge_project/td_project/camera_to_dsi_display.sdc
+@@ -1,22 +1,21 @@
++# ISOLATED ONLY: DDR usr_clk=133.333 MHz, data bounds <=7.5-0.3 ns.
++# Declarations precede all clock collection lookups.
++# DDR APB now uses pll_clk_100m. The vendor IP specifies APB as asynchronous
++# to its user interface; retain finite physical bounds, not whole-domain cuts.
+ create_clock -name {sys_clk_50m} -period 20.000 -waveform {0.000 10.000} [get_ports {I_sys_clk}]
+ create_clock -name {mipi_rx_ck_pad} -period 4.167 -waveform {0.000 2.083} [get_nets {IO_rx_clk_pad_p}]
+-
+ derive_clocks
+-
+ rename_clock -name {pll_clk_100m} [get_clocks {u_PLL/ph1p_phy_pll_wrapper_25a56e5ce2f9_Inst/u_PH1P_PHY_PLL.clkc[0]}]
+ rename_clock -name {pll_clk_24m} [get_clocks {u_PLL/ph1p_phy_pll_wrapper_25a56e5ce2f9_Inst/u_PH1P_PHY_PLL.clkc[1]}]
+ rename_clock -name {HDMI_PIXEL_CLK} [get_clocks {u_PLL/ph1p_phy_pll_wrapper_25a56e5ce2f9_Inst/u_PH1P_PHY_PLL.clkc[4]}]
+ rename_clock -name {HDMI_SERIAL_CLK} [get_clocks {u_PLL/ph1p_phy_pll_wrapper_25a56e5ce2f9_Inst/u_PH1P_PHY_PLL.clkc[5]}]
+-
+ rename_clock -name {MIPI_RX_BYTE_CLK} [get_clocks {u_mipi_dphy_rx_ph1p_mipiio_wrapper/u_ph1p_mipiio_rx_wrapper/u_PH1P_LOGIC_DPHY_MIPI_RX.o_fabric_div4_8_clk}]
+-
+-#【HX1P35A-移植适配】HDMI -> I2C 的 AE 输入由 ae_set 两级同步器接收。
+-set_false_path -from [get_clocks {HDMI_PIXEL_CLK}] -to [get_clocks {pll_clk_24m}]
+-# Applied sensor status returns on a request/ack bundled-data mailbox; payload is held stable until ack.
+-set_false_path -from [get_clocks {pll_clk_24m}] -to [get_clocks {HDMI_PIXEL_CLK}]
+-
+-
+-set_clock_groups -asynchronous \
+-    -group [get_clocks {mipi_rx_ck_pad MIPI_RX_BYTE_CLK}] \
+-    -group [get_clocks {sys_clk_50m pll_clk_100m pll_clk_24m HDMI_PIXEL_CLK HDMI_SERIAL_CLK}] \
+-    -group [get_clocks {u_ph1p35_324_ddr_wrapper/u_ddr2/ddr_clk u_ph1p35_324_ddr_wrapper/u_ddr2/usr_clk}]
++set_max_delay -from [get_clocks {HDMI_PIXEL_CLK}] -to [get_clocks {u_ph1p35_324_ddr_wrapper/u_ddr2/usr_clk}] 7.200 -datapath_only
++set_max_delay -from [get_clocks {u_ph1p35_324_ddr_wrapper/u_ddr2/usr_clk}] -to [get_clocks {HDMI_PIXEL_CLK}] 7.200 -datapath_only
++set_max_delay -from [get_clocks {MIPI_RX_BYTE_CLK}] -to [get_clocks {u_ph1p35_324_ddr_wrapper/u_ddr2/usr_clk}] 7.200 -datapath_only
++set_max_delay -from [get_clocks {u_ph1p35_324_ddr_wrapper/u_ddr2/usr_clk}] -to [get_clocks {MIPI_RX_BYTE_CLK}] 7.200 -datapath_only
++set_max_delay -from [get_clocks {pll_clk_100m}] -to [get_clocks {MIPI_RX_BYTE_CLK}] 9.700 -datapath_only
++set_max_delay -from [get_clocks {pll_clk_100m}] -to [get_clocks {u_ph1p35_324_ddr_wrapper/u_ddr2/usr_clk}] 7.200 -datapath_only
++set_max_delay -from [get_clocks {u_ph1p35_324_ddr_wrapper/u_ddr2/usr_clk}] -to [get_clocks {pll_clk_100m}] 7.200 -datapath_only
++set_max_delay -from [get_clocks {HDMI_PIXEL_CLK}] -to [get_clocks {pll_clk_24m}] 13.033 -datapath_only
++set_max_delay -from [get_clocks {pll_clk_24m}] -to [get_clocks {HDMI_PIXEL_CLK}] 13.033 -datapath_only
+diff --git a/reference_edge_project/user_source/hdl_source/ph1p35_ddr/ddr2/ddr2.v b/reference_edge_project/user_source/hdl_source/ph1p35_ddr/ddr2/ddr2.v
+index 22cc685..f2fa914 100644
+--- a/reference_edge_project/user_source/hdl_source/ph1p35_ddr/ddr2/ddr2.v
++++ b/reference_edge_project/user_source/hdl_source/ph1p35_ddr/ddr2/ddr2.v
+@@ -58,7 +58,7 @@ module ddr2
+ 
+   ph1p_ddrmc_wrapper_63f4ac254419
+   #(
+-      .tCK(1876),
++      .tCK(1875),
+       .BK_NUM(2),
+       .AC_NUM(4),
+       .DX_NUM(2),
+diff --git a/reference_edge_project/user_source/hdl_source/ph1p35_ddr/ddr2/Design.xml b/reference_edge_project/user_source/hdl_source/ph1p35_ddr/ddr2/Design.xml
+index 849992e..3aae979 100644
+--- a/reference_edge_project/user_source/hdl_source/ph1p35_ddr/ddr2/Design.xml
++++ b/reference_edge_project/user_source/hdl_source/ph1p35_ddr/ddr2/Design.xml
+@@ -46,7 +46,7 @@
+                 <ipxact:configurableElementValue referenceId="ENABLE_DDR4">0</ipxact:configurableElementValue>
+                 <ipxact:configurableElementValue referenceId="ENABLE_TWO_TYPE">1</ipxact:configurableElementValue>
+                 <ipxact:configurableElementValue referenceId="GEN_RESET">0</ipxact:configurableElementValue>
+-                <ipxact:configurableElementValue referenceId="tCK">1876</ipxact:configurableElementValue>
++                <ipxact:configurableElementValue referenceId="tCK">1875</ipxact:configurableElementValue>
+                 <ipxact:configurableElementValue referenceId="CS_WIDTH">1</ipxact:configurableElementValue>
+                 <ipxact:configurableElementValue referenceId="CKE_WIDTH">1</ipxact:configurableElementValue>
+                 <ipxact:configurableElementValue referenceId="CK_WIDTH">1</ipxact:configurableElementValue>
