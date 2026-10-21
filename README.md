@@ -1,6 +1,8 @@
 # FPGA_AL：PH1P35A 实时视觉与边缘检测工程
 
-最新独立发布：[时序 / CDC 修复 A](bitstreams/timing_closure_20261021_a/README.md)，烧录 `bitstreams/timing_closure_20261021_a/camera_timing_closure_20261021_a.bit`。经用户同意采用隔离 D 的复位/CDC/DDR 修复，223 个设计文件指纹与验证版一致，40 项仿真、Python 17 项通过。Setup/Hold WNS +0.116/+0.020 ns，STA 覆盖 98.49%，Slice 82.69%、ERAM 92/108、DSP 27/40。新生成位流，尚待上板验证；未覆盖历史文件或原运行数据库，未提交/推送。下面为历史发布记录。
+详细使用入口：[当前版本功能、操作、OSD、验证和 GitHub 交付说明](docs/CURRENT_VERSION_GUIDE.md)。本地工程检查点为 `9a07320`，实际分支为 `WZY-eram-opt`；本次未推送。下文有大量历史记录，旧资源表与旧按键说明不代表当前版本。
+
+最新独立发布：[时序 / CDC 修复 A](bitstreams/timing_closure_20261021_a/README.md)，烧录 `bitstreams/timing_closure_20261021_a/camera_timing_closure_20261021_a.bit`。已合入复位/CDC/DDR 修复，223 个设计文件指纹与验证版一致，40 项仿真、Python 17 项通过。Setup/Hold WNS +0.116/+0.020 ns，STA 覆盖 98.49%，Slice 82.69%、ERAM 92/108、DSP 27/40。用户反馈基本上板正常，并确认颜色首次获取时蜂鸣器响；未完成完整 DDR 压力/温度签核。历史文件和原运行数据库保留。下面为历史发布记录。
 
 最新独立发布：[快速找回资源优化 A](docs/TEMPLATE_FAST_RESOURCE_OPT.md)，烧录 `bitstreams/local_template_fast_resource_opt_20261020_a/camera_template_fast_resource_opt_20261020_a.bit`。保持原快速找回的精度、范围、门限及处理时延，40位快照打包和地址优化使 ERAM99→95、DSP29→27；Slice18239→18300（86.26%），是少量逻辑换存储余量。35项仿真配置、Python17项和隔离综合/路由通过；Setup/Hold WNS +0.136/+0.020ns，STA覆盖95.86%。新位流待上板，不增加缩放适应；原数据库、历史位流及best_result未覆盖，未提交/推送。下条为上一独立发布。
 
@@ -22,7 +24,7 @@
 
 上一独立发布：[中央选定与局部模板跟踪原型](docs/LOCAL_TEMPLATE_TRACKING.md)，位流 `bitstreams/local_template_20261020_b/camera_local_template_20261020_b.bit`，原8像素步进、±32像素版本保留用于历史对比。以下Git检查点与10月19日发布条目为历史记录，不代表本次资源基线。
 
-> 当前有效分支：`WZY`
+> 以下分支/标签为早期历史记录；本次实际检查点是 `WZY-eram-opt` 上的 `9a07320`。
 >
 > 历史功能/资源检查点：`a7676fb`（`perf: move vision line buffers to ERAM`）
 >
@@ -47,7 +49,9 @@
 
 `RAW` **不是**传感器 Bayer RAW10：画面仍经过 SC520、MIPI、RAW10 解包、demosaic/ISP、DDR 和白场补偿。当前视觉显示模块已恢复叠加前的逐像素直通；历史[画质增强](docs/PICTURE_QUALITY.md)的 2×2 平均与暗部曲线默认关闭，可选源码保留。自动曝光、手动四档和原 Logo/文字覆盖仍在。
 
-## 当前版本摘要
+## 历史 ERAM 行缓存版摘要（非 2026-10-21 资源）
+
+本节至下方旧资源结论属于早期 ERAM 行缓存基线，不能当作当前占用；当前数据见文首详细指南：Slice 82.69%、ERAM 92/108、DSP 27/40。
 
 最新版本保留全部功能模式，没有通过隐藏模式或删除旧源码来节省逻辑资源。资源优化来自两项等价实现替换：
 
@@ -87,7 +91,7 @@
 
 TD 工程中的完整源码、IP、管脚及约束已经列入 `.al` 文件；不要仅综合根目录 `src/` 下的早期样例。
 
-`camera_to_dsi_display.sdc` 对 `I_sys_clk` 施加 50 MHz 约束、对 MIPI 接收 pad 施加 4.167 ns 约束，并由工具派生 24 MHz、MIPI byte、HDMI pixel/serial 等时钟；HDMI 像素域到 24 MHz 摄像头配置域已显式声明为跨域例外。修改 PLL、MIPI 或曝光跨域逻辑时，应同步复查该 SDC，而不是只修改 RTL。
+`camera_to_dsi_display.sdc` 对 `I_sys_clk` 施加 50 MHz 约束、对 MIPI 接收 pad 施加 4.167 ns 约束，并由工具派生其余时钟。2026-10-21 修复版使用有限 CDC 数据路径延迟预算及 IP 灰码约束，不沿用早期整域屏蔽说明。修改 PLL、MIPI 或跨域逻辑时，应同步复查 SDC 和握手协议。
 
 ## 实际硬件处理链路
 
@@ -176,16 +180,16 @@ RGB 灰度化
 | 硬件 | 管脚 | 当前作用 |
 | --- | --- | --- |
 | KEY1 | `D5` | 低有效系统复位。 |
-| KEY2 | `A9` | 低有效；切换 `RAW → GRAY → COLOR → CANNY → RAW`。 |
-| KEY3 | `B9` | 低有效；切换 `AUTO → EXP:0 → EXP:1 → EXP:2 → EXP:3 → AUTO`。 |
-| 蜂鸣器 | `C12` | 目标由“未检测到”变为“检测到”时，输出约 2 kHz 方波约 1 秒；目标持续存在不会重复触发。 |
+| KEY2 | `A9` | 短按切换 `RAW → GRAY → COLOR → CANNY → RAW`；长按约 1 秒切 RAW 锐化，默认关闭。 |
+| KEY3 | `B9` | 短按松开切换 `AUTO → EXP:0 → EXP:1 → EXP:2 → EXP:3 → AUTO`；长按约 1 秒学习/解除模板，不改变曝光档位。 |
+| 蜂鸣器 | `C12` | 颜色锁定从 LOST 到 TRACK 时约 2 kHz 短鸣约 1 秒；HOLD 内恢复不重复触发，TPL 状态不触发。 |
 | 摄像头 I²C | `K3` / `J3` | `O_cam_scl` / `IO_cam_sda`。 |
 | 摄像头 24 MHz / 复位 | `L3` / `L2` | `O_cam_24m` / `O_cam_rst`。 |
 | HDMI TMDS + | `G16` / `F17` / `H14` / `C17` | CH0 / CH1 / CH2 / CLK。 |
 
 按键经两级同步和约 10 ms 消抖；默认目标告警使能为开。
 
-> 注意：历史说明中写过“SW5 控制蜂鸣器”，但当前顶层端口、`pin.adc` 和 RTL **没有 SW5 输入映射**。`O_alarm_enable` 上电后固定为使能。因此，当前提交中 SW5 不能实际静音蜂鸣器；若需要该功能，必须新增 SW5 顶层输入、ADC 管脚约束并接入 `S_alarm_enable`，而不是只修改说明文字。
+> 注意：历史说明中写过“SW5 控制蜂鸣器”，但当前顶层端口、`pin.adc` 和 RTL **没有 SW5 输入映射**，告警默认使能。不能据历史注释保证 SW5 行为；是否有独立硬件作用需查对应板原理图。用户已于 2026-10-21 确认颜色重新获取时短鸣正常。
 
 完整 MIPI、DDR 和其余板级管脚请以 `reference_edge_project/user_source/constraints_source/pin.adc` 为唯一准则。
 
@@ -227,7 +231,9 @@ RGB 灰度化
 
 请从相同提交重新构建，或使用项目维护者提供并经 SHA256 校验的烧录文件；不要把本地生成的 `.bit`、`*.area`、`*.timing` 当作仓库已提交内容。
 
-## 验证状态与已知问题
+## 历史基线验证状态与已知问题
+
+下表的 ERAM 基线 WNS 和资源不代表最新交付；2026-10-21 的基本上板反馈、40 项回归、覆盖率及仍未闭环的风险见 [当前指南](docs/CURRENT_VERSION_GUIDE.md)。
 
 | 项目 | 状态 |
 | --- | --- |
