@@ -1,5 +1,9 @@
 <?xml version="1.0" encoding="UTF-8"?>
+<<<<<<< Updated upstream
 <Project Version="3" Minor="2" Path="D:/Downloads/qiansai/FPGA_AL/reference_edge_project/td_project">
+=======
+<Project Version="3" Minor="2" Path="D:/desktop/FPGA_AL/FPGA_AL/reference_edge_project/td_project">
+>>>>>>> Stashed changes
     <Project_Created_Time></Project_Created_Time>
     <TD_Encoding>UTF-8</TD_Encoding>
     <TD_Version>6.2.168116</TD_Version>

@@ -166,3 +166,117 @@
 - Gaussian、四方向 NMS、原双阈值滞后连接和 2×2 受控加粗均保留，目标是增加内部细节密度而不继续扩大轮廓宽度。
 - 安路 TD 6.2.168116 完整实现通过：setup WNS `0.185 ns`、hold WNS `0.020 ns`、0 个违规端点，使用 15937 slices（75.12%）、39 RAM、23 DSP；等待人物与灯管同场景实拍后决定是否升级为里程碑标签。
 
+
+## GRAD 梯度幅值灰阶模式（未综合验证）
+
+- 显示模式由 4 档扩展为 5 档，KEY2 短按循环 `RAW → GRAY → COLOR → CANNY → GRAD → RAW`；原有四档功能与阈值不变。
+- 新增 GRAD 模式：直接显示 Gaussian + Sobel 的梯度幅值，仅做右移缩放与饱和，不经过局部极大值抑制、双阈值滞后连接和 2×2 加粗，因此输出连续灰阶（平坦区黑、弱边灰、强边白）而不是二值细线。
+- 幅值缩放由 `GRAD_SHIFT` 参数控制（默认 2，0 最亮、3 最暗），`mag_mid_d1[11:8]` 非零时饱和到 255。
+- `I_mode` 由 2 bit 扩为 3 bit，涉及 `hx_button_mode_ctrl`（五档循环）、`design_top_wrapper`（`S_vision_mode`）和 `hx_vision_pipeline`（模式译码、OSD、payload 打包）。
+- `hx_centered_display` 的 payload 由 55 bit 扩为 56 bit，`u_video_slots` 行缓存同步改为 56 bit；字段位置从高位插入，`ctrl/x/y/rgb` 索引不变，`stage_sharp` 移至 `[54]`、`stage_mode` 移至 `[53:51]`。
+- 显示去噪路径的 `{I_mode,display_source}` 由 26 bit 扩为 27 bit（该路径默认关闭）。
+- 模板框显示条件由 `!final_mode[1]` 改为 `final_mode <= 3'd1`，避免在 GRAD 模式下误画。
+- OSD 新增 `GRAD` 标识，复用既有字模，无需新增字符。
+- `tb_vision_edge_modes.sv` 同步扩到 5 档：新增 GRAD 输出必须为灰阶（R=G=B）且存在非零梯度像素的断言。
+- **尚未综合、布局布线和上板**；新增逻辑约 40 LUT6、0 ERAM、0 DSP，需按 TD 流程重新验证时序与资源。
+
+## 模板跟踪框显示平滑（抖动抑制）
+
+- `hx_template_tracker.v` 新增两个参数：`DISP_SMOOTH_SHIFT`（默认 2）、`DISP_DEADBAND`（默认 2）。
+- 新增 `disp_x/disp_y` 与 `disp_approach()` 一阶逼近函数；`center_x/center_y` 改为输出 `disp_x/disp_y`（`VERIFY` 阶段仍显示候选位置 `pending_x/pending_y`，语义不变）。
+- **搜索中心 `cx/cy` 完全不变**：仍每帧直接跳到 SAD 峰值。跟踪能力、丢失判定、重捕获行为与改动前逐位一致。
+- 更新严格每帧一次，只在 `FINISH` 成功路径：连续跟踪走 `disp_approach(disp_x,best_x)`，重捕获确认直接 `disp_x<=best_x` 对齐。`HOLD`/`LOST`/`VERIFY` 期间不更新，框停在最后可靠位置。
+- 复位与 `command` 均把 `disp_x/disp_y` 复位到画面中心。
+- `hx_vision_pipeline.v` 新增透传参数 `TEMPLATE_DISP_SMOOTH_SHIFT` / `TEMPLATE_DISP_DEADBAND`。
+- 新增 `tests/tb_template_display_smooth.sv`：逐拍验证死区性质、滞后、收敛不超调、LOST 保持、重捕获对齐、command/reset 复位；已注册进 `tools/test_raw_display_features.ps1`。
+- 既有精确坐标回归用例（`tb_template_reacquire`、`tb_template_expanded_reacquire`、`tb_template_far_reacquire`、`tb_template_global_reacquire`、`tb_template_fast_reacquire`、`tb_template_overlay`）通过参数/`defparam` 把平滑关成 0，语义与改动前一致。
+- 三个等价性用例（`tb_template_pipeline_equivalence`、`tb_template_resource_equivalence`、`tb_template_fast_resource_equivalence`）改为比较内部跟踪中心 `cx/cy`，因为 `center_x/center_y` 已是纯显示信号。
+- 说明文档：`docs/TEMPLATE_DISPLAY_SMOOTH.md`。
+- **尚未综合、布局布线和上板**；新增逻辑约 45 LUT6、0 ERAM、0 DSP。
+
+## 仿真基础设施修复：ERAM 行为模型 + I_mode 位宽
+
+### 新增 `tests/stubs/ph1p_logic_eram_stub.v`
+
+本机未安装 Tang Dynasty，`ph1p/sim_release` 下的厂商仿真库不可用，而 `hx_vision_pipeline.v` 直接例化 `PH1P_LOGIC_ERAM`，导致**所有流水线级 testbench 都无法运行**。新增一个仅用于仿真的行为模型，两个关键点：
+
+1. **A/B 两端口必须共用同一个存储阵列**。第一版桩给两个端口各建一个 `mem_a`/`mem_b`，写端口写进去的数据读端口永远读不到，行缓存恒为 0，流水线一个像素都不输出（表现为 `O_de` 全程为低、控制延迟断言在 20.6 µs 首次失败）。
+2. **必须尊重 `REGMODE_A/B`**。本工程两处例化都是 `REGMODE="NOREG"`（异步读），配合 `clka(~clk)` 做"同一像素行内先读后写"的行缓存技巧。无条件打一拍会让整条流水线多出若干拍延迟。
+
+该文件不进入综合，也不会与 TD 的厂商模型同时编译。
+
+### 修复：`I_mode` 从 2 bit 扩到 3 bit 后，多个 testbench 仍用 2 bit 驱动
+
+`GRAD` 模式引入时 `I_mode` 由 `[1:0]` 扩为 `[2:0]`，但下列用例仍用 2 bit 信号/字面量连接：
+
+- `tb_template_overlay.sv`、`tb_target_tracking.sv`、`tb_canny_noise.sv`、`tb_history_raw_compare.sv`、`tb_logo_osd.sv`、`tb_picture_quality.sv`、`tb_raw_sharpen.sv`
+
+**ModelSim 对位宽不匹配的端口不会补零，而是把多余的高位当成未连接（`z`）**（只给一条 `vsim-3015` 警告）。后果：
+
+- `final_mode` 的最高位变成 `z`，`(final_mode <= 3'd1)` 求值为 `X` → **跟踪框永远画不出来**（表现为 `tb_template_overlay` 报 "Tracking box mismatch"）。
+- `case(I_mode)` 匹配不上任何分支 → 落到 `default`，颜色检测整体失效（表现为 `tb_target_tracking` 报 "colour-neighbour count differs from oracle"）。
+
+修复：把上述用例的 `mode` 声明统一为 `[2:0]`（`tb_raw_sharpen` 的 `mode_q` 历史队列一并加宽），两处 `2'd2`/`2'd0` 字面量改为 `3'd2`/`3'd0`。
+
+### 本次仿真实测结果（ModelSim 10.5b + ERAM 桩）
+
+通过：`tb_template_display_smooth`、`tb_template_tracker`、`tb_template_reacquire`、`tb_template_expanded_reacquire`、`tb_template_far_reacquire`、`tb_template_global_reacquire`、`tb_template_fast_reacquire`、`tb_template_pipeline_equivalence`、`tb_template_resource_equivalence`、`tb_template_fast_resource_equivalence`、`tb_template_overlay`、`tb_target_tracking`、`tb_vision_edge_modes`、`tb_picture_quality`、`tb_canny_noise`。
+
+**既有失败（非本次改动引入）**：`tb_raw_sharpen` 报 `Centered RAW/GRAY mismatch at output 2636 mode 0 sharp 1: got 202020 expected 181818`。已用 `git show HEAD:` 的版本做基线对照，**在 HEAD 上同一输出点同样失败**，说明与跟踪框平滑和 `I_mode` 位宽都无关。误差恰好等于 `RAW_SHARPEN_MAX_DELTA=8`，指向 `hx_correction_slots` 的读清/补丁时序（异步读语义下的同拍竞争）。需要 TD 真实原语模型才能判定是桩的语义差异还是设计缺陷，暂不修改。
+
+## 自动曝光修复：防频闪曝光上限 + 逐通道过曝检测
+
+### 问题一：弱光下的横向明暗条带
+
+SC520 是卷帘快门，逐行曝光。50 Hz 市电下光强纹波周期为 10.0 ms，曝光时间不是纹波周期整数倍时各行积分到不同相位，产生横向条带。
+
+本工程 `uics520reg_720p60.v` 配 VTS=1000 行，720p60 下行周期 16.667 µs，曝光寄存器单位为半行 8.333 µs：
+
+- 原上限 1990 半行 = 16.583 ms = 1.66 个纹波周期 → 条带
+- 新上限 1200 半行 = 10.000 ms = 1 个纹波周期 → 无条带
+
+`ae_set.v` 新增参数 `ANTI_FLICKER`（默认 1）、`AE_EXPOSURE_MAX_FLICKER`（默认 1200）、`AE_EXPOSURE_MAX_NORMAL`（1990），内部统一为 `C_AE_MAX`，覆盖自动闭环、手动四档、上电初值、复位值。配套处理：
+
+- `C_AE_EXP1 = min(C_AE_MAX, 1200)`：EXP1 原本写死 1200，60 Hz 地区上限 1000 时会越过防频闪上限。
+- 进入 AUTO 当拍把 `r_ae_set` 压回 `C_AE_MAX`：原实现要等 16 帧才调节，从 EXP2/EXP3 切回 AUTO 会先闪约 0.27 秒条带。
+
+代价：进光量减少 `1990/1200 = 1.66x = 0.73 EV`，由模拟增益（16~176，最大约 32x）补偿，暗光噪声略增。`ANTI_FLICKER=0` 时所有路径与原参数逐位一致。
+
+### 问题二：暖光过曝盲区
+
+原高光判据 `gray >= 245`（BT.601 加权灰度）会漏判单通道削顶：暖光 `R=255,G=200,B=180` 的灰度只有 214，AE 认为曝光合适，继续提亮直到整片死白。
+
+`hx_vision_pipeline.v` 改为：
+
+```verilog
+wire [7:0] max_channel = max(R, G, B);
+wire channel_clipped = (max_channel >= HIGHLIGHT_CHANNEL_LEVEL) && (gray >= HIGHLIGHT_LUMA_GATE);
+wire highlight_pixel = channel_clipped || (gray >= HIGHLIGHT_LUMA_LEVEL);
+```
+
+新增参数 `HIGHLIGHT_CHANNEL_LEVEL=250`、`HIGHLIGHT_LUMA_GATE=180`、`HIGHLIGHT_LUMA_LEVEL=245`。
+
+`gray >= 180` 门限用于排除大面积低亮度饱和色物体：纯红 `255/20/20` 灰度仅 90，属于颜色饱和而非过曝，若不带门限会让 AE 压暗整幅画面去「修复」一朵花。
+
+`frame_highlight_count` 的帧首重装载同步改用 `highlight_pixel`。`C_HIGHLIGHT_HOLD/REDUCE/SEVERE` 三档门限与 3600 采样点不变，百分比含义不变。
+
+资源：约 4 个 LUT6，0 ERAM，0 DSP，不新增流水级。
+
+### 顶层参数
+
+`design_top_wrapper.v` 新增 `ANTI_FLICKER`、`AE_EXPOSURE_MAX_FLICKER`，透传给 `ae_set`。
+
+### 测试
+
+- 新增 `tests/tb_ae_anti_flicker.sv`：同时例化 50 Hz（上限 1200）/60 Hz（上限 1000）两种配置，检查复位值、手动四档（含 EXP1 在 60 Hz 下收到 1000）、全暗停在上限且增益补到 176、强光退到 300/16、回到全暗重新收敛，并用逐时钟沿断言保证全程 `ae <= 上限`。已注册进 `tools/test_raw_display_features.ps1`。
+- `tests/tb_picture_ae.sv` 显式加 `.ANTI_FLICKER(0)`，继续逐条锁定改动前的 1990 语义，作为「关闭防频闪后行为不变」的回归保证。
+- ModelSim 10.5b 实测通过：`tb_ae_anti_flicker`、`tb_ae_cdc_coherency`、`tb_picture_ae`、`tb_target_tracking`、`tb_template_overlay`（端到端逐像素比对，高光统计字段 dut 与 reference 一致）。
+- **尚未综合、布局布线、上板**。条带是否真正消失必须在 50 Hz 实际光源下目视确认。
+
+### 说明文档
+
+`docs/AE_FLICKER_AND_HIGHLIGHT.md`。
+
+### 仓库清理
+
+`.lock.f`（TD 工程锁文件）与 `minidump-*.dmp`（TD 崩溃转储，273 KB）在 `df745ce` 被误提交。已在 `.gitignore` 加入 `*.lock.f` / `minidump-*.dmp`，并 `git rm --cached` 取消跟踪（本地文件保留）。这两个文件仍留在 `df745ce` 的历史里，该提交尚未推送到远端。

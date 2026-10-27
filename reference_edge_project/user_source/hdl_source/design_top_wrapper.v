@@ -1,6 +1,28 @@
 
 
+<<<<<<< Updated upstream
 module design_top_wrapper (
+=======
+module design_top_wrapper #(
+    parameter WHITE_FIELD_SELF_CAL = 0,
+    parameter ENABLE_TEMPLATE_TRACKING = 1,
+    parameter WHITE_FIELD_SOFT_PRESET = 1,
+    parameter LSC_ENABLE = 1,
+    parameter LSC_GAIN_FILE = "",
+    parameter LSC_BLACK_LEVEL = 0,
+    // Keep enabled for both calibration and corrected operation with the same LUT.
+    parameter WHITE_FIELD_FIXED_AWB = WHITE_FIELD_SELF_CAL,
+    //【抖动抑制】模板跟踪框显示平滑：每帧最多走 (偏差>>SHIFT) 像素，偏差<=DEADBAND 时不动。
+    // 只影响 OSD 画框观感，不影响搜索、评分与丢失判定。置 0 可关闭。
+    parameter integer TEMPLATE_DISP_SMOOTH_SHIFT = 2,
+    parameter integer TEMPLATE_DISP_DEADBAND = 2,
+    //【防频闪】1：自动/手动曝光的快门上限锁到市电纹波周期整数倍（50 Hz -> 10.0 ms），
+    // 消除弱光下的横向明暗条带；代价是暗光下少约 0.73 EV，需更高增益、噪声略增。
+    // 需要极限暗光且能接受条带时置 0，回到原来的 1990 半行上限。
+    parameter ANTI_FLICKER = 1,
+    parameter [15:0] AE_EXPOSURE_MAX_FLICKER = 16'd1200 // 1200 半行 = 10.0 ms（50 Hz）；60 Hz 地区改 16'd1000。
+) (
+>>>>>>> Stashed changes
     input wire        I_sys_clk,
     input wire        I_rst_n,
       
@@ -169,7 +191,13 @@ module design_top_wrapper (
     wire[23:0]  S_vision_rgb;
     wire        S_target_found;
     wire[23:0]  S_target_pixels;
+<<<<<<< Updated upstream
     wire[1:0]   S_vision_mode;
+=======
+    wire[2:0]   S_vision_mode;
+    wire        S_raw_sharpen_enable;
+    wire        S_template_command;
+>>>>>>> Stashed changes
     wire[1:0]   S_exposure_level; //【HX1P35A-移植适配】KEY3 选择的手动曝光档位（HDMI 像素时钟域）。
     wire        S_auto_exposure; //【HX1P35A-移植适配】自动曝光模式，上电默认开启。
     wire[7:0]   S_frame_luma; //【HX1P35A-移植适配】视频帧全局平均亮度。
@@ -507,7 +535,10 @@ module design_top_wrapper (
 	
 
   
-  ae_set u_ae_set (
+  ae_set #(
+      .ANTI_FLICKER(ANTI_FLICKER), //【防频闪】把曝光上限锁到市电纹波周期整数倍。
+      .AE_EXPOSURE_MAX_FLICKER(AE_EXPOSURE_MAX_FLICKER)
+  ) u_ae_set (
       .I_clk(S_24m_clk),
       .I_rst(~S_rst_n),
       .I_btn(4'b1111), //【HX1P35A-移植适配】实体按键专用于视觉控制，避免切换模式时同时改变摄像头曝光。
@@ -758,7 +789,14 @@ isp_top u_isp_top (
     );
 
     //【HX1P35A-移植适配】纯 RTL 视觉功能，位于算法适配层与 HDMI 混合器之间。
+<<<<<<< Updated upstream
     hx_vision_pipeline u_hx_vision_pipeline(
+=======
+    hx_vision_pipeline #(.ENABLE_CAL_STATUS(WHITE_FIELD_SELF_CAL),
+        .ENABLE_TEMPLATE_TRACKING(ENABLE_TEMPLATE_TRACKING),
+        .TEMPLATE_DISP_SMOOTH_SHIFT(TEMPLATE_DISP_SMOOTH_SHIFT),
+        .TEMPLATE_DISP_DEADBAND(TEMPLATE_DISP_DEADBAND)) u_hx_vision_pipeline(
+>>>>>>> Stashed changes
         .I_clk(S_hdmi_pixel_clk), .I_rst_n(S_hdmi_rst_n),
         .I_vsync(S_alg_vsync), .I_hsync(S_alg_hsync), .I_de(S_alg_de),
         .I_user(S_alg_user), .I_last(S_alg_last), .I_rgb(S_alg_rgb), .I_mode(S_vision_mode), .I_exposure_level(S_exposure_level), .I_auto_exposure(S_auto_exposure), //【HX1P35A-移植适配】OSD 显示自动或手动曝光状态。

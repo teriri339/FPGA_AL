@@ -47,3 +47,11 @@ __pycache__/
 .vscode/
 .idea/
 *.recent_user_depot.ini
+
+# ============================================================
+# TangDynasty 运行时产物（每次打开工程都会变，不能入库）
+# .lock.f 是 TD 的工程锁文件，CURRENT_VERSION_GUIDE 已明确警告不要上传；
+# minidump-*.dmp 是 TD 崩溃转储，单个数百 KB 且含本机内存镜像。
+# ============================================================
+*.lock.f
+minidump-*.dmp

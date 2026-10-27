@@ -3,6 +3,7 @@
 module hx_vision_pipeline #(
     parameter IMAGE_WIDTH = 1280,
     parameter MIN_TARGET_PIXELS = 24'd800,
+<<<<<<< Updated upstream
     parameter SOBEL_THRESHOLD_DARK = 12'd40, //【HX1P35A-移植适配】暗区弱边缘门限适度降低，补回人脸明暗、衣纹和墙板接缝。
     parameter SOBEL_THRESHOLD_NORMAL = 12'd60, //【HX1P35A-移植适配】普通室内照明增强文字、线缆和人物内部纹理。
     parameter SOBEL_THRESHOLD_BRIGHT = 12'd64, //【HX1P35A-移植适配】亮区低对比门限降低，使灯管与浅色天花板之间的边界进入候选。
@@ -12,11 +13,45 @@ module hx_vision_pipeline #(
     parameter SOBEL_DETAIL_THRESHOLD_DARK = 12'd112, //【HX1P35A-移植适配】暗光下恢复较强的非极大值邻边，增强头发和衣物纹理。
     parameter SOBEL_DETAIL_THRESHOLD_NORMAL = 12'd144, //【HX1P35A-移植适配】普通照明细节补偿门限兼顾密度和噪声。
     parameter SOBEL_DETAIL_THRESHOLD_BRIGHT = 12'd176 //【HX1P35A-移植适配】亮区保留灯管、窗框等连续细节，避免原 256 门限过度删除。
+=======
+    // Mild Canny-only noise tuning; no change to exposure or RGB display.
+    parameter SOBEL_THRESHOLD_DARK = 12'd48,
+    parameter SOBEL_THRESHOLD_NORMAL = 12'd64,
+    parameter SOBEL_THRESHOLD_BRIGHT = 12'd68,
+    parameter SOBEL_STRONG_THRESHOLD_DARK = 12'd80,
+    parameter SOBEL_STRONG_THRESHOLD_NORMAL = 12'd104,
+    parameter SOBEL_STRONG_THRESHOLD_BRIGHT = 12'd120,
+    parameter ENABLE_STATUS_OSD = 1'b1, // 恢复左上角模式、曝光、颜色目标坐标/面积文字。
+    parameter ENABLE_ANLOGIC_LOGO = 1'b1, // 显示末端叠加右上角安路 Logo，不进入视觉统计。
+    parameter ENABLE_EDGE_REFINEMENT = 1'b1, // 加粗前去除无延伸支撑的小点簇，再定向连接 1~2 像素断口。
+    parameter ENABLE_CAL_STATUS = 0,
+    // Restore direct RAW/GRAY display; optional enhancements remain available.
+    parameter ENABLE_DISPLAY_DENOISE = 1'b0,
+    parameter ENABLE_SHADOW_LIFT = 1'b0,
+    parameter ENABLE_RAW_SHARPEN = 1'b1,
+    parameter [3:0] GRAD_SHIFT = 4'd2, //【GRAD 模式】Sobel 幅值右移位数；0 最亮、3 最暗，默认 2。
+    parameter [7:0] RAW_SHARPEN_NOISE_GATE = 8'd6,
+    parameter [7:0] RAW_SHARPEN_MAX_DELTA = 8'd8,
+    parameter integer RAW_SHARPEN_GAIN_SHIFT = 1,
+    // Acquire at the original threshold; a locked target may use a lower one.
+    parameter TARGET_RELEASE_PIXELS = (MIN_TARGET_PIXELS > 1) ? (MIN_TARGET_PIXELS >> 1) : 1,
+    parameter integer TARGET_HOLD_FRAMES = 10, // Hold ten missed frames; lose lock on the eleventh. Zero disables holding.
+    //【抖动抑制】模板跟踪框显示坐标一阶逼近参数（只影响 OSD 画框，不影响搜索与判定）。
+    // 置 0 可关闭平滑，使 template_cx/cy 严格等于跟踪中心（回归测试用）。
+    parameter integer TEMPLATE_DISP_SMOOTH_SHIFT = 2,
+    parameter integer TEMPLATE_DISP_DEADBAND = 2,
+    //【过曝检测】逐通道削顶门限。旧实现只看 BT.601 灰度 >= 245，暖光/单色高亮场景下
+    // 灰度可能只有 210 左右（例如 R=255,G=200,B=180 时灰度仅 214），AE 完全看不见这类
+    // 削顶，于是越调越亮直到整片死白。改为"任一通道接近削顶且整体亮度不低"。
+    parameter [7:0] HIGHLIGHT_CHANNEL_LEVEL = 8'd250, // 单通道削顶门限，取满量程 255 的 98%。
+    parameter [7:0] HIGHLIGHT_LUMA_GATE = 8'd180, // 参与削顶判定的最低整体亮度，用于排除纯色物体。
+    parameter [7:0] HIGHLIGHT_LUMA_LEVEL = 8'd245 // 原有灰度门限，保留用于中性灰近削顶场景。
+>>>>>>> Stashed changes
 ) (
     input wire I_clk, input wire I_rst_n,
     input wire I_vsync, input wire I_hsync, input wire I_de,
     input wire I_user, input wire I_last, input wire [23:0] I_rgb,
-    input wire [1:0] I_mode,
+    input wire [2:0] I_mode,
     input wire [1:0] I_exposure_level, //【HX1P35A-移植适配】在 HDMI OSD 中显示当前曝光档位。
     input wire I_auto_exposure, //【HX1P35A-移植适配】OSD 显示 AUTO 状态。
     output reg O_vsync, output reg O_hsync, output reg O_de,
@@ -39,7 +74,17 @@ module hx_vision_pipeline #(
 
     //【HX1P35A-移植适配】每 16 行、每 16 像素取样一次；3600 个样点除以 4096 得到 0~224 的稳定亮度量。
     wire luma_sample = I_de && (pix_x[3:0] == 4'd0) && (pix_y[3:0] == 4'd0); //【HX1P35A-移植适配】覆盖整幅画面而非局部亮点。
-    wire highlight_sample = luma_sample && (gray >= 8'd245); //【HX1P35A-移植适配】只统计真正接近削顶的高光，避免把正常浅色墙面误作过曝。
+    //【过曝检测】三通道取最大值：三个比较器加两个二选一，约 3 个 LUT6，无额外时序压力。
+    wire [7:0] max_channel = (I_rgb[23:16] >= I_rgb[15:8])
+        ? ((I_rgb[23:16] >= I_rgb[7:0]) ? I_rgb[23:16] : I_rgb[7:0])
+        : ((I_rgb[15:8]  >= I_rgb[7:0]) ? I_rgb[15:8]  : I_rgb[7:0]);
+    //【过曝检测】"某通道削顶 + 整体亮度不低" 才算过曝。
+    //   - 暖光灯 R=255/G=200/B=180：max=255 且灰度 214 >= 180 → 判为过曝（旧实现漏判）。
+    //   - 纯红物体 R=255/G=20/B=20：max=255 但灰度仅 90 < 180 → 不判为过曝，避免 AE 把
+    //     大面积饱和色物体误当削顶而压暗整幅画面。
+    wire channel_clipped = (max_channel >= HIGHLIGHT_CHANNEL_LEVEL) && (gray >= HIGHLIGHT_LUMA_GATE);
+    wire highlight_pixel = channel_clipped || (gray >= HIGHLIGHT_LUMA_LEVEL); // 中性灰近削顶仍按原门限统计。
+    wire highlight_sample = luma_sample && highlight_pixel; //【HX1P35A-移植适配】只统计真正接近削顶的高光，避免把正常浅色墙面误作过曝。
     wire shadow_sample = luma_sample && (gray <= 8'd48); //【HX1P35A-移植适配】统计缺少可辨纹理的深暗区域，用于亮暗共存测光。
     reg [19:0] frame_luma_sum; //【HX1P35A-移植适配】最大 3600*255，小于 20 位上限。
     reg [11:0] frame_highlight_count; //【HX1P35A-移植适配】3600 个样点的高光计数。
@@ -162,6 +207,12 @@ module hx_vision_pipeline #(
                               edge_dilate_above ||
                               ((edge_x_q != 0) && edge_dilate_above_left); //【HX1P35A-移植适配】边缘向右、向下各扩展一像素，接近参考画面的粗亮轮廓。
 
+    //【GRAD 模式】梯度幅值灰阶显示：取 NMS 中心对齐的 Gaussian+Sobel 幅值，
+    // 只做移位缩放和饱和，不经过局部极大值抑制、双阈值和滞后连接，
+    // 因此输出连续灰阶（平坦区黑、弱边灰、强边白）而非二值细线。
+    wire [11:0] grad_scaled = mag_mid_d1 >> GRAD_SHIFT;
+    wire [7:0] grad_gray = (grad_scaled[11:8] != 4'd0) ? 8'd255 : grad_scaled[7:0];
+
     //【HX1P35A-移植适配】先用亮度与通道差筛选颜色候选，再用同色邻域一致性抑制暗光 Bayer/增益噪点。
     wire raw_red_hit = (I_rgb[23:16] >= 8'd96) && ({1'b0,I_rgb[23:16]} >= ({1'b0,I_rgb[15:8]} + 9'd40)) && ({1'b0,I_rgb[23:16]} >= ({1'b0,I_rgb[7:0]} + 9'd40)); //【HX1P35A-移植适配】红色候选需具备足够亮度和饱和度。
     wire raw_green_hit = (I_rgb[15:8] >= 8'd64) && ({1'b0,I_rgb[15:8]} >= ({1'b0,I_rgb[23:16]} + 9'd16)) && ({1'b0,I_rgb[15:8]} >= ({1'b0,I_rgb[7:0]} + 9'd16)); //【HX1P35A-移植适配】放宽绿色候选以识别偏暗、印刷和偏黄绿色包装；邻域一致性继续过滤孤立噪点。
@@ -182,6 +233,43 @@ module hx_vision_pipeline #(
     wire [23:0] dim_rgb = {1'b0,I_rgb[23:17],1'b0,I_rgb[15:9],1'b0,I_rgb[7:1]}; //【HX1P35A-移植适配】保留半亮原图作为 COLOR 背景。
     wire [23:0] color_overlay_rgb = target_hit ? target_mask_rgb : dim_rgb; //【HX1P35A-移植适配】目标高亮，未命中区域仍可观察。
 
+<<<<<<< Updated upstream
+=======
+    //【资源优化】ERAM 在 I_clk 下降沿预读当前地址，上升沿沿用原流水处理并写回，避免增加整拍延迟。
+    hx_eram_line_store #(.DATA_WIDTH(18)) u_raw_color_line_store (
+        .clk(I_clk), .rd_addr(pix_x), .wr_addr(pix_x),
+        .wr_en(I_de && (pix_x < IMAGE_WIDTH)), .wr_data(raw_line_wr), .rd_data(raw_line_rd)
+    );
+    hx_eram_line_store #(.DATA_WIDTH(46)) u_edge_line_store (
+        .clk(I_clk), .rd_addr(gaussian_x_q), .wr_addr(gaussian_x_d),
+        .wr_en(gaussian_de_d && (gaussian_x_d < IMAGE_WIDTH)), .wr_data(edge_line_wr), .rd_data(edge_line_rd)
+    );
+    hx_eram_line_store #(.DATA_WIDTH(1)) u_dilate_line_store (
+        .clk(I_clk), .rd_addr(refined_x), .wr_addr(refined_x),
+        .wr_en(refined_de && (refined_x < IMAGE_WIDTH)), .wr_data(refined_edge), .rd_data(dilate_line_rd)
+    );
+
+    wire raw_sharpen_selected = ENABLE_RAW_SHARPEN && I_raw_sharpen_enable && (I_mode == 3'd0);
+    wire [2:0] template_status;
+    wire [3:0] template_reason;
+    wire [14:0] template_best,template_margin;
+    wire [4:0] template_misses;
+    wire [10:0] template_cx,template_cy;
+    generate if(ENABLE_TEMPLATE_TRACKING)begin : g_template
+        hx_template_tracker #(.IMAGE_WIDTH(IMAGE_WIDTH),.IMAGE_HEIGHT(IMAGE_HEIGHT),
+            .DISP_SMOOTH_SHIFT(TEMPLATE_DISP_SMOOTH_SHIFT),.DISP_DEADBAND(TEMPLATE_DISP_DEADBAND)) u_tracker (
+            .clk(I_clk),.rst_n(I_rst_n),.command(I_template_command),
+            .de(gaussian_de_q),.x(gaussian_x_q),.y(gaussian_y_q),.luma(gaussian_gray_q),
+            .status(template_status),.center_x(template_cx),.center_y(template_cy),.busy(),
+            .debug_reason(template_reason),.debug_best(template_best),
+            .debug_margin(template_margin),.debug_misses(template_misses)
+        );
+    end else begin : g_no_template
+        assign template_status=0;assign template_cx=IMAGE_WIDTH/2;assign template_cy=IMAGE_HEIGHT/2;
+        assign template_reason=0;assign template_best=0;assign template_margin=0;assign template_misses=0;
+    end endgenerate
+
+>>>>>>> Stashed changes
     //【HX1P35A-移植适配】逐帧统计目标总面积、各颜色面积和外接矩形。
     reg [10:0] cur_xmin, cur_xmax, cur_ymin, cur_ymax;
     reg [10:0] box_xmin, box_xmax, box_ymin, box_ymax;
@@ -282,9 +370,96 @@ module hx_vision_pipeline #(
     //【HX1P35A-移植适配】将算法结果与叠加绘制拆成两级流水，保证 75MHz HDMI 像素时序。
     reg stage_vsync, stage_hsync, stage_de, stage_user, stage_last;
     reg [23:0] stage_rgb;
+<<<<<<< Updated upstream
     reg [10:0] draw_x, draw_y;
 
     wire box_border = (I_mode == 2'd2) && O_target_found && stage_de && //【HX1P35A-移植适配】目标框只在 COLOR 模式显示，避免干扰 Sobel 观察。
+=======
+    reg [10:0] source_x, source_y;
+    reg [2:0] prefetch_mode, stage_mode;
+    reg prefetch_sharp, stage_sharp;
+    wire [10:0] draw_x, draw_y, logo_input_x, logo_input_y;
+    wire [4:0] final_ctrl;
+    wire [23:0] final_rgb;
+    wire [2:0] final_mode;
+    wire logo_input_de;
+    generate if (ENABLE_RAW_SHARPEN) begin : g_centered_display
+        wire [55:0] delayed;
+        wire signed [8:0] delta;
+        reg [55:0] d1, d2;
+        reg [23:0] enhanced1, enhanced2;
+        hx_centered_display #(.IMAGE_WIDTH(IMAGE_WIDTH),
+            .NOISE_GATE(RAW_SHARPEN_NOISE_GATE), .MAX_DELTA(RAW_SHARPEN_MAX_DELTA),
+            .GAIN_SHIFT(RAW_SHARPEN_GAIN_SHIFT)) u_display (
+            .clk(I_clk), .rst_n(I_rst_n),
+            .payload({stage_mode==0,stage_sharp,stage_mode,
+                stage_vsync,stage_hsync,stage_de,stage_user,stage_last,source_x,source_y,stage_rgb}),
+            .delayed(delayed), .delta(delta)
+        );
+        function [7:0] adjust;
+            input [7:0] value;
+            input signed [8:0] amount;
+            reg signed [9:0] result;
+            begin
+                result=$signed({1'b0,value})+amount;
+                adjust=result<0 ? 8'd0 : result>255 ? 8'd255 : result[7:0];
+            end
+        endfunction
+        always @(posedge I_clk or negedge I_rst_n) begin
+            if(!I_rst_n) begin d1<=0; d2<=0; enhanced1<=0; enhanced2<=0; end
+            else begin
+                d1<=delayed; d2<=d1;
+                enhanced1 <= delayed[54] ?
+                    {adjust(delayed[23:16],delta),adjust(delayed[15:8],delta),adjust(delayed[7:0],delta)} : delayed[23:0];
+                enhanced2<=enhanced1;
+            end
+        end
+        assign logo_input_x=delayed[45:35];
+        assign logo_input_y=delayed[34:24];
+        assign logo_input_de=delayed[48];
+        assign draw_x=d2[45:35]; assign draw_y=d2[34:24];
+        assign final_ctrl=d2[50:46]; assign final_mode=d2[53:51]; assign final_rgb=enhanced2;
+    end else begin : g_direct_display
+        assign final_ctrl={stage_vsync,stage_hsync,stage_de,stage_user,stage_last};
+        assign final_rgb=stage_rgb; assign final_mode=stage_mode;
+        assign draw_x=source_x; assign draw_y=source_y;
+        assign logo_input_x=pix_x; assign logo_input_y=pix_y; assign logo_input_de=I_de;
+    end endgenerate
+
+    // lab_ex3_osd/hdmi_mixer.v logo block, adapted to this pipeline's stage_rgb.
+    // Keep the example's 160x160 addressing, RGB888 and bit-24 transparency.
+    // Address prefetch and the complete video stream advance together. Output
+    // latency is three registers. No crop, palette or colour conversion.
+    localparam LOGO_X = IMAGE_WIDTH - 176;
+    localparam LOGO_Y = 8;
+    wire [24:0] logo_pixel_q;
+    wire logo_active_q;
+    generate if (ENABLE_ANLOGIC_LOGO && IMAGE_WIDTH >= 192) begin : g_anlogic_logo
+        wire logo_active = logo_input_de && (logo_input_x >= LOGO_X) && (logo_input_x < LOGO_X+160) &&
+                           (logo_input_y >= LOGO_Y) && (logo_input_y < LOGO_Y+160);
+        wire [11:0] S_logo_x = logo_input_x - LOGO_X;
+        wire [11:0] S_logo_y = logo_input_y - LOGO_Y;
+        wire [14:0] S_logo_addr = logo_active ? (S_logo_y * 15'd160 + S_logo_x) : 15'd0;
+        reg [14:0] addr_q;
+        wire [24:0] S_logo_pixel;
+        reg [24:0] pixel_q;
+        reg active_q, active_d;
+        assign logo_active_q = active_d;
+        assign logo_pixel_q = pixel_q;
+        anlogic_logo_rom u_anlogic_logo_rom (
+            .I_addr(addr_q), .O_pixel(S_logo_pixel)
+        );
+        always @(posedge I_clk or negedge I_rst_n) begin
+            if (!I_rst_n) begin active_q <= 1'b0; active_d <= 1'b0; addr_q <= 0; pixel_q <= 25'd0; end
+            else begin addr_q <= S_logo_addr; active_q <= logo_active; active_d <= active_q; pixel_q <= S_logo_pixel; end
+        end
+    end else begin : g_anlogic_logo_disabled
+        assign logo_pixel_q = 25'd0;
+        assign logo_active_q = 1'b0;
+    end endgenerate
+
+    wire box_border = (final_mode == 3'd2) && O_target_found && final_ctrl[2] && // Display mode travels with its pixels.
+>>>>>>> Stashed changes
         ((((draw_x == box_xmin) || (draw_x == box_xmax)) && (draw_y >= box_ymin) && (draw_y <= box_ymax)) ||
          (((draw_y == box_ymin) || (draw_y == box_ymax)) && (draw_x >= box_xmin) && (draw_x <= box_xmax)));
 
@@ -297,6 +472,13 @@ module hx_vision_pipeline #(
     wire [4:0] glyph_bits = font5x7(osd_char,glyph_y);
     wire osd_background = stage_de && (draw_x < 11'd432) && (draw_y < 11'd32);
     wire osd_glyph = osd_background && (glyph_x < 3'd5) && (glyph_y < 3'd7) && glyph_bits[4-glyph_x];
+<<<<<<< Updated upstream
+=======
+    wire [23:0] osd_pixel_fg = template_osd_region ? template_fg : applied_osd_region ? applied_osd_fg : osd_fg;
+    wire template_border=ENABLE_TEMPLATE_TRACKING && (final_mode <= 3'd1) && final_ctrl[2] &&
+        ((((draw_x==template_cx-32)||(draw_x==template_cx+31)) && draw_y>=template_cy-32 && draw_y<template_cy+32) ||
+         (((draw_y==template_cy-32)||(draw_y==template_cy+31)) && draw_x>=template_cx-32 && draw_x<template_cx+32));
+>>>>>>> Stashed changes
 
     //【HX1P35A-移植适配】第一行显示算法模式和 EXP:0~3 曝光档；第二行显示主颜色、目标中心坐标和像素面积。
     always @(*) begin
@@ -308,11 +490,28 @@ module hx_vision_pipeline #(
                 0:osd_char="M"; 1:osd_char="O"; 2:osd_char="D"; 3:osd_char="E"; 4:osd_char=":";
                 14:osd_char="E"; 15:osd_char="X"; 16:osd_char="P"; 17:osd_char=":"; 18:osd_char=I_auto_exposure ? "A" : bcd_ascii({2'b00,I_exposure_level}); //【HX1P35A-移植适配】自动曝光显示 EXP:A。
                 default: begin
+<<<<<<< Updated upstream
                     case (I_mode)
                         2'd0: case(osd_col) 6:osd_char="R";7:osd_char="A";8:osd_char="W";default:osd_char=" ";endcase
                         2'd1: case(osd_col) 6:osd_char="G";7:osd_char="R";8:osd_char="A";9:osd_char="Y";default:osd_char=" ";endcase
                         2'd2: case(osd_col) 6:osd_char="C";7:osd_char="O";8:osd_char="L";9:osd_char="O";10:osd_char="R";default:osd_char=" ";endcase
                         default: case(osd_col) 6:osd_char="C";7:osd_char="A";8:osd_char="N";9:osd_char="N";10:osd_char="Y";default:osd_char=" ";endcase //【HX1P35A-移植适配】全屏边缘模式升级为轻量 Canny。
+=======
+                    case (final_mode)
+                        3'd0: case(osd_col)
+                            6:osd_char="R";7:osd_char="A";8:osd_char="W";
+                            9:osd_char=I_raw_sharpen_enable && ENABLE_RAW_SHARPEN ? "S" : " ";
+                            10:osd_char=I_raw_sharpen_enable && ENABLE_RAW_SHARPEN ? "H" : " ";
+                            11:osd_char=I_raw_sharpen_enable && ENABLE_RAW_SHARPEN ? "A" : " ";
+                            12:osd_char=I_raw_sharpen_enable && ENABLE_RAW_SHARPEN ? "R" : " ";
+                            13:osd_char=I_raw_sharpen_enable && ENABLE_RAW_SHARPEN ? "P" : " ";
+                            default:osd_char=" ";
+                        endcase
+                        3'd1: case(osd_col) 6:osd_char="G";7:osd_char="R";8:osd_char="A";9:osd_char="Y";default:osd_char=" ";endcase
+                        3'd2: case(osd_col) 6:osd_char="C";7:osd_char="O";8:osd_char="L";9:osd_char="O";10:osd_char="R";default:osd_char=" ";endcase
+                        3'd3: case(osd_col) 6:osd_char="C";7:osd_char="A";8:osd_char="N";9:osd_char="N";10:osd_char="Y";default:osd_char=" ";endcase
+                        default: case(osd_col) 6:osd_char="G";7:osd_char="R";8:osd_char="A";9:osd_char="D";default:osd_char=" ";endcase //【GRAD】梯度幅值灰阶模式。
+>>>>>>> Stashed changes
                     endcase
                 end
             endcase
@@ -344,13 +543,80 @@ module hx_vision_pipeline #(
     end
 
     reg [23:0] base_rgb;
+<<<<<<< Updated upstream
+=======
+    // Do not feed the Canny/overlay mux into the denoiser's half-cycle path.
+    // Other modes bypass filtering downstream; history only needs RAW/GRAY.
+    wire [23:0] display_source = I_mode[0] ? {gray,gray,gray} : I_rgb;
+    // Display-only, causal 2x2 filter: no line/coordinate displacement.
+    // Reject the entire window if any channel differs by more than 24.
+    // Thus equal-luma chromatic edges are protected as well as luma edges.
+    wire [26:0] display_above;
+    reg [26:0] display_left, display_above_left;
+    reg [29:0] display_sum_q;
+    reg display_flat_q;
+    function near_rgb;
+        input [23:0] a, b;
+        integer c;
+        reg [7:0] av, bv;
+        begin
+            near_rgb = 1'b1;
+            for (c=0; c<3; c=c+1) begin
+                av = a >> (c*8); bv = b >> (c*8);
+                if ((av > bv ? av-bv : bv-av) > 8'd24) near_rgb = 1'b0;
+            end
+        end
+    endfunction
+    function [7:0] lift_shadow;
+        input [7:0] v;
+        begin
+            if (v < 64) lift_shadow = v + (v >> 2);
+            else if (v < 128) lift_shadow = v + ((8'd128-v) >> 2);
+            else lift_shadow = v;
+        end
+    endfunction
+    wire [23:0] display_filtered = display_flat_q ?
+        {display_sum_q[29:22],display_sum_q[19:12],display_sum_q[9:2]} : prefetch_rgb;
+    generate if (ENABLE_DISPLAY_DENOISE) begin : g_display_denoise
+        hx_eram_line_store #(.DATA_WIDTH(27)) u_display_row (
+            .clk(I_clk), .rd_addr(pix_x), .wr_addr(pix_x),
+            .wr_en(I_rst_n && I_de && (pix_x < IMAGE_WIDTH)),
+            .wr_data({I_mode,display_source}), .rd_data(display_above)
+        );
+    end else begin : g_no_display_denoise
+        assign display_above = 27'd0;
+    end endgenerate
+    always @(posedge I_clk or negedge I_rst_n) begin
+        if (!I_rst_n) begin
+            display_left <= 0; display_above_left <= 0;
+            display_sum_q <= 0; display_flat_q <= 0;
+        end else begin
+            display_flat_q <= ENABLE_DISPLAY_DENOISE && I_de && !I_mode[1] &&
+                (pix_x > 0) && (pix_y > 0) &&
+                (display_left[26:24] == I_mode) && (display_above[26:24] == I_mode) &&
+                (display_above_left[26:24] == I_mode) &&
+                near_rgb(display_source,display_left[23:0]) &&
+                near_rgb(display_source,display_above[23:0]) &&
+                near_rgb(display_source,display_above_left[23:0]);
+            display_sum_q <= {
+                ({2'd0,display_source[23:16]} + {2'd0,display_left[23:16]} + {2'd0,display_above[23:16]} + {2'd0,display_above_left[23:16]} + 10'd2),
+                ({2'd0,display_source[15:8]} + {2'd0,display_left[15:8]} + {2'd0,display_above[15:8]} + {2'd0,display_above_left[15:8]} + 10'd2),
+                ({2'd0,display_source[7:0]} + {2'd0,display_left[7:0]} + {2'd0,display_above[7:0]} + {2'd0,display_above_left[7:0]} + 10'd2)};
+            if (I_de) begin
+                display_left <= {I_mode,display_source};
+                display_above_left <= display_above;
+            end
+        end
+    end
+>>>>>>> Stashed changes
     reg [23:0] overlay_rgb;
-    //【HX1P35A-移植适配】00 原图、01 灰度、10 彩色目标掩膜、11 全屏轻量 Canny 边缘。
+    //【HX1P35A-移植适配】000 原图、001 灰度、010 彩色目标掩膜、011 全屏轻量 Canny 边缘、100 梯度幅值灰阶。
     always @(*) begin
         case(I_mode)
-            2'd1: base_rgb = {gray,gray,gray};
-            2'd2: base_rgb = color_overlay_rgb; //【HX1P35A-移植适配】COLOR 不再因未命中目标而整屏全黑。
-            2'd3: base_rgb = edge_display_pixel ? 24'hffffff : 24'h000000; //【HX1P35A-移植适配】Canny 输出使用强细节补偿和 2x2 加粗后的边缘。
+            3'd1: base_rgb = {gray,gray,gray};
+            3'd2: base_rgb = color_overlay_rgb; //【HX1P35A-移植适配】COLOR 不再因未命中目标而整屏全黑。
+            3'd3: base_rgb = edge_display_pixel ? 24'hffffff : 24'h000000; //【HX1P35A-移植适配】Canny 输出使用强细节补偿和 2x2 加粗后的边缘。
+            3'd4: base_rgb = {grad_gray,grad_gray,grad_gray}; //【GRAD】Gaussian+Sobel 幅值灰阶，不做 NMS 与二值化。
             default: base_rgb = I_rgb;
         endcase
     end
@@ -414,7 +680,7 @@ module hx_vision_pipeline #(
                 O_frame_shadows <= frame_shadow_count; //【HX1P35A-移植适配】锁存上一帧深暗面积用于保护暗部结构。
                 O_frame_luma_toggle <= ~O_frame_luma_toggle; //【HX1P35A-移植适配】跨域接收端据此识别新一帧统计值。
                 frame_luma_sum <= {12'd0,gray}; //【HX1P35A-移植适配】当前 (0,0) 像素作为新一帧第一个样点。
-                frame_highlight_count <= (gray >= 8'd245) ? 12'd1 : 12'd0; //【HX1P35A-移植适配】从新帧首像素重新统计真正接近削顶的高光。
+                frame_highlight_count <= highlight_pixel ? 12'd1 : 12'd0; //【HX1P35A-移植适配】从新帧首像素重新统计真正接近削顶的高光。
                 frame_shadow_count <= (gray <= 8'd48) ? 12'd1 : 12'd0; //【HX1P35A-移植适配】从新帧首像素重新统计深暗区域。
             end else if (luma_sample) begin
                 frame_luma_sum <= frame_luma_sum + gray; //【HX1P35A-移植适配】全画面稀疏亮度累加。
@@ -539,3 +805,356 @@ module hx_vision_pipeline #(
         end
     end
 endmodule
+<<<<<<< Updated upstream
+=======
+
+// Binary edge postprocessing BEFORE dilation: never feed filled pixels back into
+// the same pass. Two independent windows keep removed speckles out of bridging.
+module hx_edge_binary_refine #(
+    parameter IMAGE_WIDTH = 1280
+) (
+    input wire I_clk, I_rst_n, I_de,
+    input wire [10:0] I_x, I_y,
+    input wire I_edge,
+    output wire O_de,
+    output wire [10:0] O_x,
+    output wire O_edge
+);
+    wire clean_de, clean_edge;
+    wire [10:0] clean_x, clean_y;
+    hx_edge_window5 #(.IMAGE_WIDTH(IMAGE_WIDTH), .BRIDGE(0)) u_clean (
+        .I_clk(I_clk), .I_rst_n(I_rst_n), .I_de(I_de), .I_x(I_x), .I_y(I_y), .I_edge(I_edge),
+        .O_de(clean_de), .O_x(clean_x), .O_y(clean_y), .O_edge(clean_edge)
+    );
+    hx_edge_window5 #(.IMAGE_WIDTH(IMAGE_WIDTH), .BRIDGE(1)) u_bridge (
+        .I_clk(I_clk), .I_rst_n(I_rst_n), .I_de(clean_de), .I_x(clean_x), .I_y(clean_y), .I_edge(clean_edge),
+        .O_de(O_de), .O_x(O_x), .O_y(), .O_edge(O_edge)
+    );
+endmodule
+
+// Display-only lookahead: retain EVERY clock slot (including blanking) for
+// 2048 clocks. Production line period is 1650 clocks, leaving >380 clocks
+// for the pipelined correction to arrive. Pixels are never cropped/shifted.
+module hx_centered_display #(
+    parameter integer IMAGE_WIDTH=1280,
+    parameter [7:0] NOISE_GATE=6, MAX_DELTA=8,
+    parameter integer GAIN_SHIFT=1
+) (
+    input wire clk,rst_n,
+    input wire [55:0] payload,
+    output reg [55:0] delayed,
+    output reg signed [8:0] delta
+);
+    reg [10:0] slot;
+    reg [11:0] warm;
+    wire de=payload[48];
+    wire [10:0] x=payload[45:35], y=payload[34:24];
+    wire [15:0] luma_sum=payload[23:16]*8'd77+payload[15:8]*8'd150+payload[7:0]*8'd29;
+    wire [7:0] gray=luma_sum[15:8];
+    wire [55:0] fifo_read;
+    wire [28:0] rows;
+    // Two luma rows + two mode-valid rows + previous row's clock-slot tag.
+    hx_eram_line_store #(.DATA_WIDTH(29)) u_rows (
+        .clk(clk),.rd_addr(x),.wr_addr(x),.wr_en(rst_n && de && x<IMAGE_WIDTH),
+        .wr_data({slot,rows[16],payload[55],rows[7:0],gray}),.rd_data(rows)
+    );
+    hx_eram_line_store #(.DATA_WIDTH(56)) u_video_slots (
+        .clk(clk),.rd_addr(slot),.wr_addr(slot),.wr_en(rst_n),
+        .wr_data(payload),.rd_data(fifo_read)
+    );
+    reg [7:0] top2,top1,mid2,mid1,bot2,bot1;
+    reg topv2,topv1,midv2,midv1,botv2,botv1;
+    reg [10:0] midtag1;
+    reg [7:0] taps[0:8];
+    reg [7:0] center0,center1,center2;
+    reg [9:0] row0,row1,row2;
+    reg [11:0] blur2;
+    reg signed [8:0] hp3;
+    reg [8:0] magnitude4;
+    reg negative4;
+    reg signed [8:0] correction5;
+    reg [10:0] tag[0:5];
+    reg [5:0] valid;
+    wire [8:0] gated=(magnitude4>NOISE_GATE) ? ((magnitude4-NOISE_GATE)>>GAIN_SHIFT) : 9'd0;
+    wire [8:0] limited=(gated>MAX_DELTA) ? {1'b0,MAX_DELTA} : gated;
+    wire [8:0] correction_read;
+    // Read-before-clear on port A; corrections are written by port B BEFORE
+    // their original video slot is consumed. No RAM initialization assumption.
+    hx_correction_slots u_corrections (
+        .clk(clk),.read_clear_addr(slot),.patch_addr(tag[5]),
+        .patch_enable(rst_n && valid[5]),.patch(correction5),.result(correction_read)
+    );
+    integer k;
+    always @(posedge clk or negedge rst_n) begin
+        if(!rst_n) begin
+            slot<=0;warm<=0;delayed<=0;delta<=0;
+            top2<=0;top1<=0;mid2<=0;mid1<=0;bot2<=0;bot1<=0;
+            topv2<=0;topv1<=0;midv2<=0;midv1<=0;botv2<=0;botv1<=0;midtag1<=0;
+            center0<=0;center1<=0;center2<=0;row0<=0;row1<=0;row2<=0;blur2<=0;
+            hp3<=0;magnitude4<=0;negative4<=0;correction5<=0;valid<=0;
+            for(k=0;k<9;k=k+1)taps[k]<=0;
+            for(k=0;k<6;k=k+1)tag[k]<=0;
+        end else begin
+            slot<=slot+1'b1;
+            if(warm<2048)warm<=warm+1'b1;
+            delayed<=warm==2048 ? fifo_read : 56'd0;
+            delta<=warm==2048 ? $signed(correction_read) : 9'sd0;
+            // First stage only captures RAM outputs. Arithmetic starts on a
+            // full-cycle registered path, not the half-cycle ERAM read path.
+            taps[0]<=top2;taps[1]<=top1;taps[2]<=rows[15:8];
+            taps[3]<=mid2;taps[4]<=mid1;taps[5]<=rows[7:0];
+            taps[6]<=bot2;taps[7]<=bot1;taps[8]<=gray;
+            center0<=mid1;tag[0]<=midtag1;
+            valid[0]<=de && x>=2 && y>=2 && x<IMAGE_WIDTH &&
+                topv2 && topv1 && rows[17] && midv2 && midv1 && rows[16] &&
+                botv2 && botv1 && payload[55];
+            for(k=1;k<6;k=k+1)begin valid[k]<=valid[k-1];tag[k]<=tag[k-1];end
+            row0<={2'd0,taps[0]}+({2'd0,taps[1]}<<1)+{2'd0,taps[2]};
+            row1<={2'd0,taps[3]}+({2'd0,taps[4]}<<1)+{2'd0,taps[5]};
+            row2<={2'd0,taps[6]}+({2'd0,taps[7]}<<1)+{2'd0,taps[8]};
+            center1<=center0;
+            blur2<={2'd0,row0}+({2'd0,row1}<<1)+{2'd0,row2};center2<=center1;
+            hp3<=$signed({1'b0,center2})-$signed({1'b0,blur2[11:4]});
+            magnitude4<=hp3[8] ? $unsigned(-hp3) : $unsigned(hp3);negative4<=hp3[8];
+            correction5<=negative4 ? -$signed(limited) : $signed(limited);
+            if(de && x<IMAGE_WIDTH) begin
+                if(x==0) begin
+                    top2<=0;top1<=rows[15:8];mid2<=0;mid1<=rows[7:0];bot2<=0;bot1<=gray;
+                    topv2<=0;topv1<=rows[17];midv2<=0;midv1<=rows[16];botv2<=0;botv1<=payload[55];
+                end else begin
+                    top2<=top1;top1<=rows[15:8];mid2<=mid1;mid1<=rows[7:0];bot2<=bot1;bot1<=gray;
+                    topv2<=topv1;topv1<=rows[17];midv2<=midv1;midv1<=rows[16];botv2<=botv1;botv1<=payload[55];
+                end
+                midtag1<=rows[28:18];
+            end
+        end
+    end
+endmodule
+
+module hx_correction_slots (
+    input wire clk,
+    input wire [10:0] read_clear_addr,patch_addr,
+    input wire patch_enable,
+    input wire [8:0] patch,
+    output wire [8:0] result
+);
+    wire [8:0] unused_b;
+    PH1P_LOGIC_ERAM #(
+        .DATA_WIDTH_A(9),.DATA_WIDTH_B(9),.ADDR_WIDTH_A(11),.ADDR_WIDTH_B(11),
+        .DATA_DEPTH_A(2048),.DATA_DEPTH_B(2048),.MODE("DP"),
+        .REGMODE_A("NOREG"),.REGMODE_B("NOREG"),
+        .WRITEMODE_A("READBEFOREWRITE"),.WRITEMODE_B("READBEFOREWRITE"),
+        .IMPLEMENT("20K(FAST)"),.ECC_ENCODE("DISABLE"),.ECC_DECODE("DISABLE"),
+        .CLKMODE("ASYNC"),.SSROVERCE("DISABLE"),.OREGSET_A("RESET"),.OREGSET_B("RESET"),
+        .RESETMODE_A("ASYNC"),.RESETMODE_B("ASYNC"),
+        .ASYNC_RESET_RELEASE_A("ASYNC"),.ASYNC_RESET_RELEASE_B("ASYNC"),
+        .INIT_FILE("NONE"),.FILL_ALL("NONE")
+    ) u_ram (
+        .dia(9'd0),.dib(patch),.addra(read_clear_addr),.addrb(patch_addr),
+        .cea(1'b1),.ceb(1'b1),.ocea(1'b0),.oceb(1'b0),.clka(~clk),.clkb(clk),
+        .wea(1'b1),.web(patch_enable),.bea(1'b0),.beb(1'b0),.rsta(1'b0),.rstb(1'b0),
+        .doa(result),.dob(unused_b),.ecc_sbiterr(),.ecc_dbiterr(),.ecc_sbiterrinj(1'b0),.ecc_dbiterrinj(1'b0)
+    );
+endmodule
+
+
+// One 5x5 raster window, four prior rows packed into a 4-bit ERAM.
+// Output uses the current raster slot; window centre is (x-2,y-2).
+// No frame buffer/flush: incomplete top/left windows output zero. Two stages
+// shift interior edge content by 4 rows/columns plus register latency; the
+// bottom/right tail is cropped. Non-edge display modes do not use this data.
+module hx_edge_window5 #(
+    parameter IMAGE_WIDTH = 1280,
+    parameter BRIDGE = 0
+) (
+    input wire I_clk, I_rst_n, I_de,
+    input wire [10:0] I_x, I_y,
+    input wire I_edge,
+    output reg O_de,
+    output reg [10:0] O_x, O_y,
+    output reg O_edge
+);
+    wire active = I_de && (I_x < IMAGE_WIDTH);
+    wire [3:0] line_rd;
+    wire [4:0] right_col = {(I_y >= 4) && line_rd[3], (I_y >= 3) && line_rd[2],
+                            (I_y >= 2) && line_rd[1], (I_y >= 1) && line_rd[0], I_edge};
+    reg [3:0] row0, row1, row2, row3, row4;
+    wire [4:0] w0 = {row0, right_col[4]};
+    wire [4:0] w1 = {row1, right_col[3]};
+    wire [4:0] w2 = {row2, right_col[2]};
+    wire [4:0] w3 = {row3, right_col[1]};
+    wire [4:0] w4 = {row4, right_col[0]};
+
+    hx_eram_line_store #(.DATA_WIDTH(4)) u_rows (
+        .clk(I_clk), .rd_addr(I_x), .wr_addr(I_x),
+        .wr_en(active), .wr_data({line_rd[2:0], I_edge}), .rd_data(line_rd)
+    );
+
+    wire near_any = (|w1[3:1]) || w2[3] || w2[1] || (|w3[3:1]);
+    wire ring_any = (|w0) || (|w4) || w1[4] || w1[0] || w2[4] || w2[0] || w3[4] || w3[0];
+    wire through = (w2[3] && w2[1]) || (w1[2] && w3[2]) ||
+                   (w1[3] && w3[1]) || (w1[1] && w3[3]);
+    // Preserve supported endpoints and through-lines, not only dense blobs.
+    // A lone pixel, isolated pair, or isolated 2x2 patch has no such support.
+    wire clean_pixel = w2[2] && ((near_any && ring_any) || through);
+
+    function bridge_axis;
+        input m2, m1, p1, p2;
+        begin
+            // One empty pixel: opposite endpoints plus one outward support.
+            // Two empty pixels: two samples on one side and one on the other.
+            bridge_axis = (m1 && p1 && (m2 || p2)) ||
+                          (m2 && m1 && p2) || (m2 && p1 && p2);
+        end
+    endfunction
+    wire bridge_pixel = w2[2] ||
+                        bridge_axis(w2[4], w2[3], w2[1], w2[0]) ||
+                        bridge_axis(w0[2], w1[2], w3[2], w4[2]) ||
+                        bridge_axis(w0[4], w1[3], w3[1], w4[0]) ||
+                        bridge_axis(w0[0], w1[1], w3[3], w4[4]);
+
+    always @(posedge I_clk or negedge I_rst_n) begin
+        if (!I_rst_n) begin
+            row0 <= 0; row1 <= 0; row2 <= 0; row3 <= 0; row4 <= 0;
+            O_de <= 0; O_x <= 0; O_y <= 0; O_edge <= 0;
+        end else begin
+            O_de <= active;
+            O_edge <= active && (I_x >= 4) && (I_y >= 4) && (BRIDGE ? bridge_pixel : clean_pixel);
+            if (active) begin
+                O_x <= I_x; O_y <= I_y;
+                if (I_x == 0) begin
+                    row0 <= {3'd0, right_col[4]}; row1 <= {3'd0, right_col[3]};
+                    row2 <= {3'd0, right_col[2]}; row3 <= {3'd0, right_col[1]};
+                    row4 <= {3'd0, right_col[0]};
+                end else begin
+                    row0 <= {row0[2:0], right_col[4]}; row1 <= {row1[2:0], right_col[3]};
+                    row2 <= {row2[2:0], right_col[2]}; row3 <= {row3[2:0], right_col[1]};
+                    row4 <= {row4[2:0], right_col[0]};
+                end
+            end
+        end
+    end
+endmodule
+
+//【资源优化】PH1P35 片上 ERAM 双口行缓存：A 口下降沿读，B 口上升沿写。
+// 使用 2048 深度覆盖 1280 像素行；未用地址不参与画面处理。
+module hx_eram_line_store #(
+    parameter DATA_WIDTH = 8
+) (
+    input  wire                  clk,
+    input  wire [10:0]           rd_addr,
+    input  wire [10:0]           wr_addr,
+    input  wire                  wr_en,
+    input  wire [DATA_WIDTH-1:0] wr_data,
+    output wire [DATA_WIDTH-1:0] rd_data
+);
+    wire [DATA_WIDTH-1:0] unused_write_port_data;
+
+    PH1P_LOGIC_ERAM #(
+        .DATA_WIDTH_A(DATA_WIDTH),
+        .DATA_WIDTH_B(DATA_WIDTH),
+        .ADDR_WIDTH_A(11),
+        .ADDR_WIDTH_B(11),
+        .DATA_DEPTH_A(2048),
+        .DATA_DEPTH_B(2048),
+        .MODE("DP"),
+        .REGMODE_A("NOREG"),
+        .REGMODE_B("NOREG"),
+        .WRITEMODE_A("NORMAL"),
+        .WRITEMODE_B("READBEFOREWRITE"),
+        .IMPLEMENT("20K(FAST)"),
+        .ECC_ENCODE("DISABLE"),
+        .ECC_DECODE("DISABLE"),
+        .CLKMODE("ASYNC"),
+        .SSROVERCE("DISABLE"),
+        .OREGSET_A("RESET"),
+        .OREGSET_B("RESET"),
+        .RESETMODE_A("ASYNC"),
+        .RESETMODE_B("ASYNC"),
+        .ASYNC_RESET_RELEASE_A("ASYNC"),
+        .ASYNC_RESET_RELEASE_B("ASYNC"),
+        .INIT_FILE("NONE"),
+        .FILL_ALL("NONE")
+    ) u_line_eram (
+        .dia({DATA_WIDTH{1'b0}}),
+        .dib(wr_data),
+        .addra(rd_addr),
+        .addrb(wr_addr),
+        .cea(1'b1),
+        .ceb(1'b1),
+        .ocea(1'b0),
+        .oceb(1'b0),
+        .clka(~clk),
+        .clkb(clk),
+        .wea(1'b0),
+        .web(wr_en),
+        .bea(1'b0),
+        .beb(1'b0),
+        .rsta(1'b0),
+        .rstb(1'b0),
+        .doa(rd_data),
+        .dob(unused_write_port_data),
+        .ecc_sbiterr(),
+        .ecc_dbiterr(),
+        .ecc_sbiterrinj(1'b0),
+        .ecc_dbiterrinj(1'b0)
+    );
+endmodule
+
+// Coherent bundled-data mailbox for confirmed sensor register snapshots.
+// The source must keep the payload stable until O_src_ack_toggle matches its request.
+module hx_sensor_applied_cdc (
+    input wire src_req_toggle,
+    input wire [15:0] src_exposure,
+    input wire [23:0] src_gain_regs,
+    input wire [1:0] src_status,
+    input wire src_has_value,
+    input wire dst_clk,
+    input wire dst_rst_n,
+    output reg src_ack_toggle,
+    output reg [15:0] dst_exposure,
+    output reg [23:0] dst_gain_regs,
+    output reg [1:0] dst_status,
+    output reg dst_has_value,
+    output reg dst_update_toggle
+);
+    (* async_reg = "true" *) reg [1:0] req_sync;
+
+    always @(posedge dst_clk or negedge dst_rst_n) begin
+        if (!dst_rst_n) begin
+            req_sync <= 2'b00;
+            src_ack_toggle <= 1'b0;
+            dst_exposure <= 16'd0;
+            dst_gain_regs <= 24'd0;
+            dst_status <= 2'd0;
+            dst_has_value <= 1'b0;
+            dst_update_toggle <= 1'b0;
+        end else begin
+            req_sync <= {req_sync[0], src_req_toggle};
+            if (req_sync[1] != src_ack_toggle) begin
+                dst_exposure <= src_exposure;
+                dst_gain_regs <= src_gain_regs;
+                dst_status <= src_status;
+                dst_has_value <= src_has_value;
+                src_ack_toggle <= req_sync[1];
+                dst_update_toggle <= req_sync[1];
+            end
+        end
+    end
+endmodule
+
+// Reset assertion is asynchronous; release is local to the receiving clock.
+// A stopped clock therefore holds the domain in reset until two real edges.
+module hx_reset_release (
+    input wire clk,
+    input wire async_rst_n,
+    output wire rst_n
+);
+    (* async_reg="true" *) reg [1:0] release_sync=2'b00;
+    always @(posedge clk or negedge async_rst_n) begin
+        if(!async_rst_n) release_sync<=2'b00;
+        else release_sync<={release_sync[0],1'b1};
+    end
+    assign rst_n=release_sync[1];
+endmodule
+>>>>>>> Stashed changes
