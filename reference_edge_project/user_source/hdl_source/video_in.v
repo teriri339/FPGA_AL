@@ -22,6 +22,9 @@ module video_in (
     input wire         I_ddr_user_ready
 );
 
+    wire I_camera_rst_n, I_ddr_rst_n;
+    hx_reset_release u_reset_camera(I_camera_clk,I_rst_n,I_camera_rst_n);
+    hx_reset_release u_reset_ddr(I_ddr_clk,I_rst_n,I_ddr_rst_n);
     wire        S_fifo_rst;
     reg         S_camera_frame_start_extend; ///脉冲展宽，同步到ddr_clk时钟域
     reg[3:0]    S_extend_cnt;
@@ -69,8 +72,8 @@ module video_in (
     );
 
 
-    always @(posedge I_camera_clk or negedge I_rst_n) begin
-        if(!I_rst_n)
+    always @(posedge I_camera_clk or negedge I_camera_rst_n) begin
+        if(!I_camera_rst_n)
             S_camera_frame_start_extend <= 1'b0;
         else
             if(I_camera_frame_start)
@@ -101,8 +104,8 @@ module video_in (
 	/*
 		如果前一帧图像有误少行了，那么地址回退为之前的，覆盖有问题的那帧图像
 	*/
-    always @(posedge I_ddr_clk or negedge I_rst_n) begin
-        if(!I_rst_n)
+    always @(posedge I_ddr_clk or negedge I_ddr_rst_n) begin
+        if(!I_ddr_rst_n)
             S_video_in_wp <= 'd0;
         else
             if(I_display_pause)
@@ -119,8 +122,8 @@ module video_in (
     end
 
 
-    always @(posedge I_ddr_clk or negedge I_rst_n) begin
-        if(!I_rst_n)
+    always @(posedge I_ddr_clk or negedge I_ddr_rst_n) begin
+        if(!I_ddr_rst_n)
             O_video_out_rp <= 'd0;
         else
             if(I_display_pause)
@@ -141,8 +144,8 @@ module video_in (
     /*
         fifo的深度是512，实际的深度是510，因此需要注意每次读出的长度避免为256，否则连续两次读写会引起fifo读空，丢失数据
     */
-    always @(posedge I_ddr_clk or negedge I_rst_n) begin
-        if(!I_rst_n)
+    always @(posedge I_ddr_clk or negedge I_ddr_rst_n) begin
+        if(!I_ddr_rst_n)
             S_ddr_wr_valid <= 1'b0;
         else
             if(S_ddr_wr_valid && I_ddr_user_ready && S_ddr_wr_cnt == 'd239)
@@ -174,8 +177,8 @@ module video_in (
 	/*
 		如果前一帧图像有误少行了，那么地址回退为之前的，覆盖有问题的那帧图像
 	*/
-    always @(posedge I_ddr_clk or negedge I_rst_n) begin
-        if(!I_rst_n)
+    always @(posedge I_ddr_clk or negedge I_ddr_rst_n) begin
+        if(!I_ddr_rst_n)
             O_ddr_user_addr <= 1'b0;
         else
             if(S_frame_start && (!I_mipi_rx_error))

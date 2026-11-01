@@ -10,12 +10,7 @@ module hx_template_tracker #(
     parameter integer MAX_MEAN_ERROR=12,MIN_UNIQUENESS=64,MIN_TEXTURE=384,
     parameter integer AUTO_REACQUIRE=1,REACQUIRE_CONFIRM_FRAMES=3,
     parameter integer EXPANDED_REACQUIRE=1,FAR_REACQUIRE=1,
-    parameter integer GLOBAL_REACQUIRE=1,FAST_REACQUIRE=1,
-    //【抖动抑制】显示框一阶逼近参数（只影响 OSD 画框坐标，不影响搜索与判定）
-    // DISP_SMOOTH_SHIFT：每帧最多走 偏差>>SHIFT 像素，越大越稳；匀速运动滞后 ≈ 2^SHIFT 帧。
-    // DISP_DEADBAND    ：偏差不超过该值完全不动，用来吃掉静止场景 SAD 峰值的 ±1~2 像素抖动。
-    parameter integer DISP_SMOOTH_SHIFT=2,
-    parameter integer DISP_DEADBAND=2
+    parameter integer GLOBAL_REACQUIRE=1,FAST_REACQUIRE=1, ENABLE_MOTION_PREDICTION=1, PREDICTION_MIN_MARGIN=MIN_UNIQUENESS
 ) (
     input wire clk,rst_n,command,de,
     input wire [10:0] x,y,
@@ -38,6 +33,43 @@ module hx_template_tracker #(
     reg [3:0] phase;
     reg [1:0] job;
     reg [10:0] cx,cy,roi_x,roi_y,best_x,best_y,coarse_x,coarse_y,second_x,second_y;
+    // Position remains the accepted SAD measurement (alpha=1).  Velocity
+    // uses a Q4 fixed-point beta=1/2 update on reliable, consecutive matches.
+    // Independently implemented from the alpha-beta concept; no external RTL.
+    reg signed [8:0] velocity_x,velocity_y;
+    function signed [8:0] bounded_velocity;
+        input [10:0] current,previous;
+        input signed [8:0] previous_velocity;
+        reg signed [12:0] delta;
+        reg signed [9:0] target,old_velocity,corrected;
+        begin
+            delta=$signed({2'b0,current})-$signed({2'b0,previous});
+            if(delta>13'sd8) delta=13'sd8;
+            else if(delta< -13'sd8) delta=-13'sd8;
+            target=delta <<< 4;
+            old_velocity={previous_velocity[8],previous_velocity};
+            // Stop or reversal responds immediately; same-direction changes
+            // are smoothed to reduce noisy frame-to-frame velocity changes.
+            if(target==0 || old_velocity==0 || target[9]!=old_velocity[9] ||
+               (target[9] ? -target : target) > (old_velocity[9] ? -old_velocity : old_velocity))
+                corrected=target;
+            else corrected=old_velocity+((target-old_velocity) >>> 1);
+            bounded_velocity=corrected[8:0];
+        end
+    endfunction
+    function [10:0] predicted_center;
+        input [10:0] position;
+        input signed [8:0] velocity;
+        input integer limit;
+        reg signed [12:0] prediction;
+        reg signed [8:0] whole_velocity;
+        begin
+            whole_velocity=(velocity + (velocity[8] ? 9'sd7 : 9'sd8)) >>> 4;
+            prediction=$signed({2'b0,position})+$signed({{4{whole_velocity[8]}},whole_velocity});
+            predicted_center=prediction<13'sd32 ? 11'd32 :
+                prediction>limit-32 ? limit-32 : prediction[10:0];
+        end
+    endfunction
     reg armed,template_valid,collect,learn_frame,fine,fine_pass,checking_final;
     reg [4:0] misses;
     reg retry_center;
@@ -141,9 +173,11 @@ module hx_template_tracker #(
     wire [10:0] global_x_next=!recovering ? 11'd32 : recovery_slot_global ? global_x_after : global_x;
     wire [10:0] global_y_next=!recovering ? 11'd32 : recovery_slot_global ? global_y_after : global_y;
     wire [10:0] search_x=status==VERIFY ? pending_x :
-        (AUTO_REACQUIRE && status==LOST) ? (fast_active ? fast_x : global_active ? global_x : far_active ? far_search_x : shifted_center(anchor_x,retry_dx,IMAGE_WIDTH)) : cx;
+        (AUTO_REACQUIRE && status==LOST) ? (fast_active ? fast_x : global_active ? global_x : far_active ? far_search_x : shifted_center(anchor_x,retry_dx,IMAGE_WIDTH)) :
+        (ENABLE_MOTION_PREDICTION && status==TRACK) ? predicted_center(cx,velocity_x,IMAGE_WIDTH) : cx;
     wire [10:0] search_y=status==VERIFY ? pending_y :
-        (AUTO_REACQUIRE && status==LOST) ? (fast_active ? fast_y : global_active ? global_y : far_active ? far_search_y : shifted_center(anchor_y,retry_dy,IMAGE_HEIGHT)) : cy;
+        (AUTO_REACQUIRE && status==LOST) ? (fast_active ? fast_y : global_active ? global_y : far_active ? far_search_y : shifted_center(anchor_y,retry_dy,IMAGE_HEIGHT)) :
+        (ENABLE_MOTION_PREDICTION && status==TRACK) ? predicted_center(cy,velocity_y,IMAGE_HEIGHT) : cy;
     wire [10:0] next_roi_x=search_x<TILE_SIZE/2 ? 11'd0 : search_x>IMAGE_WIDTH-TILE_SIZE/2 ? IMAGE_WIDTH-TILE_SIZE : search_x-TILE_SIZE/2;
     wire [10:0] next_roi_y=search_y<TILE_SIZE/2 ? 11'd0 : search_y>IMAGE_HEIGHT-TILE_SIZE/2 ? IMAGE_HEIGHT-TILE_SIZE : search_y-TILE_SIZE/2;
     wire [10:0] rx=frame_start ? next_roi_x : roi_x,ry=frame_start ? next_roi_y : roi_y;
@@ -182,30 +216,8 @@ module hx_template_tracker #(
     assign busy=phase!=IDLE;
     wire confirmation_consistent=best_x+12>=pending_x && best_x<=pending_x+12 &&
         best_y+12>=pending_y && best_y<=pending_y+12;
-    //【抖动抑制】显示框一阶逼近：搜索中心 cx/cy 保持每帧直接跳到 SAD 峰值（不牺牲跟踪
-    // 能力、不改变丢失判定），只有送 OSD 绘制的 disp_x/disp_y 走低通。
-    //   - 偏差 <= DISP_DEADBAND 时完全不动，吃掉静止场景 ±1~2 像素的峰值跳变；
-    //   - 偏差更大时每帧至少走 1 像素，保证慢速目标不会永久卡在死区外沿；
-    //   - 匀速运动只产生 2^SHIFT 帧的固定滞后，不累积漂移。
-    // 首次锁定 / 重捕获确认时直接对齐，避免框从旧位置滑过整个画面。
-    // 更新严格每帧一次（只在 FINISH 成功路径上）：若放到每个时钟周期会立即收敛，
-    // 等于没有低通；HOLD / LOST 期间不更新，框自然停在最后位置。
-    reg [10:0] disp_x,disp_y;
-    function [10:0] disp_approach;
-        input [10:0] current;
-        input [10:0] target;
-        reg [10:0] gap,inc;
-        begin
-            gap=(target>=current) ? (target-current) : (current-target);
-            inc=gap>>DISP_SMOOTH_SHIFT;
-            if(inc==11'd0)inc=11'd1;
-            if(gap<=DISP_DEADBAND)disp_approach=current;
-            else if(target>current)disp_approach=current+inc;
-            else disp_approach=current-inc;
-        end
-    endfunction
-    assign center_x=status==VERIFY ? pending_x : disp_x;
-    assign center_y=status==VERIFY ? pending_y : disp_y;
+    assign center_x=status==VERIFY ? pending_x : cx;
+    assign center_y=status==VERIFY ? pending_y : cy;
     assign debug_misses=misses;
     always @(posedge clk)begin
         template_q<=template_mem[template_addr];patch_q<=patch_mem[patch_addr];
@@ -216,8 +228,7 @@ module hx_template_tracker #(
     end
     always @(posedge clk or negedge rst_n)begin
         if(!rst_n)begin
-            status<=READY;phase<=IDLE;job<=J_LEARN;cx<=IMAGE_WIDTH/2;cy<=IMAGE_HEIGHT/2;
-            disp_x<=IMAGE_WIDTH/2;disp_y<=IMAGE_HEIGHT/2;
+            status<=READY;phase<=IDLE;job<=J_LEARN;cx<=IMAGE_WIDTH/2;cy<=IMAGE_HEIGHT/2;velocity_x<=0;velocity_y<=0;
             roi_x<=0;roi_y<=0;coarse_x<=0;coarse_y<=0;best_x<=0;best_y<=0;second_x<=0;second_y<=0;
             armed<=0;template_valid<=0;collect<=0;learn_frame<=0;fine<=0;fine_pass<=0;checking_final<=0;misses<=0;
             retry_center<=0;retry_step<=0;confirm_count<=0;pending_x<=IMAGE_WIDTH/2;pending_y<=IMAGE_HEIGHT/2;
@@ -231,18 +242,18 @@ module hx_template_tracker #(
             pass_best<=32767;first_best<=32767;pass_x<=0;pass_y<=0;first_x<=0;first_y<=0;
             debug_reason<=0;debug_best<=32767;debug_margin<=0;
         end else if(command)begin
-            phase<=IDLE;collect<=0;learn_frame<=0;template_valid<=0;misses<=0;
+            phase<=IDLE;collect<=0;learn_frame<=0;template_valid<=0;misses<=0;velocity_x<=0;velocity_y<=0;
             retry_center<=0;retry_step<=0;confirm_count<=0;
             retry_cadence<=0;far_x<=0;far_y<=0;far_center<=0;recovery_slot_far<=0;
             global_warmup<=0;global_turn<=0;global_x<=32;global_y<=32;recovery_slot_global<=0;
             fast_turn<=0;recovery_slot_fast<=0;
             cx<=IMAGE_WIDTH/2;cy<=IMAGE_HEIGHT/2;
-            disp_x<=IMAGE_WIDTH/2;disp_y<=IMAGE_HEIGHT/2;
             debug_reason<=(status==READY || status==LOST || status==FLAT) ? 0 : 7;
             debug_best<=32767;debug_margin<=0;
             if(status==READY || status==LOST || status==FLAT)begin armed<=1;status<=LEARN;end
             else begin armed<=0;status<=READY;end
         end else if(frame_start && busy)begin
+            velocity_x<=0;velocity_y<=0;
             phase<=IDLE;collect<=0;learn_frame<=0;debug_reason<=5;
             if(job==J_LEARN)begin status<=FLAT;template_valid<=0;end
             else if(AUTO_REACQUIRE && (recovering || misses>=HOLD_FRAMES-1))begin
@@ -254,6 +265,7 @@ module hx_template_tracker #(
             else if(misses>=HOLD_FRAMES-1)begin status<=LOST;template_valid<=0;end
             else begin status<=HOLD;misses<=misses+1'b1;end
         end else begin
+            if(status!=TRACK)begin velocity_x<=0;velocity_y<=0;end
             if(frame_start)begin
                 recovery_slot_far<=far_active;
                 recovery_slot_global<=global_active;
@@ -371,8 +383,6 @@ module hx_template_tracker #(
                             if(REACQUIRE_CONFIRM_FRAMES<=1 ||
                                 (status==VERIFY && confirmation_consistent && confirm_count>=REACQUIRE_CONFIRM_FRAMES-1))begin
                                 cx<=best_x;cy<=best_y;status<=TRACK;misses<=0;confirm_count<=0;retry_center<=0;retry_step<=0;debug_reason<=10;
-                                //【抖动抑制】重捕获确认后显示框直接对齐，不从旧位置滑过画面。
-                                disp_x<=best_x;disp_y<=best_y;
                                 retry_cadence<=0;far_x<=0;far_y<=0;far_center<=0;
                                 global_warmup<=0;global_turn<=0;global_x<=32;global_y<=32;
                                 fast_turn<=0;
@@ -385,9 +395,12 @@ module hx_template_tracker #(
                                 if(recovery_slot_global)begin global_x<=global_x_after;global_y<=global_y_after;end
                             end
                         end else begin
+                            // Configurable confidence gate for predictive velocity updates.
+                            if(status==TRACK && {1'b0,second_best}>={1'b0,best}+PREDICTION_MIN_MARGIN)begin
+                                velocity_x<=bounded_velocity(best_x,cx,velocity_x);
+                                velocity_y<=bounded_velocity(best_y,cy,velocity_y);
+                            end else begin velocity_x<=0;velocity_y<=0;end
                             cx<=best_x;cy<=best_y;status<=TRACK;misses<=0;confirm_count<=0;retry_center<=0;retry_step<=0;
-                            //【抖动抑制】同帧就朝新峰值逼近，避免多滞后一帧。
-                            disp_x<=disp_approach(disp_x,best_x);disp_y<=disp_approach(disp_y,best_y);
                             retry_cadence<=0;far_x<=0;far_y<=0;far_center<=0;
                             global_warmup<=0;global_turn<=0;global_x<=32;global_y<=32;
                             fast_turn<=0;

@@ -1,8 +1,5 @@
 
 
-<<<<<<< Updated upstream
-module design_top_wrapper (
-=======
 module design_top_wrapper #(
     parameter WHITE_FIELD_SELF_CAL = 0,
     parameter ENABLE_TEMPLATE_TRACKING = 1,
@@ -11,18 +8,8 @@ module design_top_wrapper #(
     parameter LSC_GAIN_FILE = "",
     parameter LSC_BLACK_LEVEL = 0,
     // Keep enabled for both calibration and corrected operation with the same LUT.
-    parameter WHITE_FIELD_FIXED_AWB = WHITE_FIELD_SELF_CAL,
-    //【抖动抑制】模板跟踪框显示平滑：每帧最多走 (偏差>>SHIFT) 像素，偏差<=DEADBAND 时不动。
-    // 只影响 OSD 画框观感，不影响搜索、评分与丢失判定。置 0 可关闭。
-    parameter integer TEMPLATE_DISP_SMOOTH_SHIFT = 2,
-    parameter integer TEMPLATE_DISP_DEADBAND = 2,
-    //【防频闪】1：自动/手动曝光的快门上限锁到市电纹波周期整数倍（50 Hz -> 10.0 ms），
-    // 消除弱光下的横向明暗条带；代价是暗光下少约 0.73 EV，需更高增益、噪声略增。
-    // 需要极限暗光且能接受条带时置 0，回到原来的 1990 半行上限。
-    parameter ANTI_FLICKER = 1,
-    parameter [15:0] AE_EXPOSURE_MAX_FLICKER = 16'd1200 // 1200 半行 = 10.0 ms（50 Hz）；60 Hz 地区改 16'd1000。
+    parameter WHITE_FIELD_FIXED_AWB = WHITE_FIELD_SELF_CAL
 ) (
->>>>>>> Stashed changes
     input wire        I_sys_clk,
     input wire        I_rst_n,
       
@@ -81,8 +68,19 @@ module design_top_wrapper #(
     wire [15:0] 	S_ag;
     wire 			S_cam_cfg_done;
     wire 			S_ae_cfg_done;
-    wire 			S_ae_req; 
-	
+	wire 			S_ae_req;
+    wire [15:0] S_ae_applied_mailbox;
+    wire [23:0] S_gain_applied_mailbox;
+    wire [1:0] S_ae_applied_status_mailbox;
+    wire S_ae_applied_has_value_mailbox;
+    wire S_ae_applied_snapshot_req;
+    wire S_ae_applied_snapshot_ack;
+    wire [15:0] S_ae_applied_video;
+    wire [23:0] S_gain_applied_video;
+    wire [1:0] S_ae_applied_status_video;
+    wire S_ae_applied_has_value_video;
+    wire S_ae_applied_update_toggle;
+
 	wire        	S_csi_rx_clk;  
     wire        	S_hs_rx_valid;  
     wire[15:0]  	S_hs_rx_data;   
@@ -119,6 +117,7 @@ module design_top_wrapper #(
     wire        S_hdmi_serial_clk;
     wire        S_hdmi_rst_n;
     wire        S_video_out_rst_n;
+    wire S_cfg_rst_n, S_csi_logic_rst_n, S_ddr_logic_rst_n, S_lp_rst_n;
 
 
     wire        S_vi_128b_frame_start;
@@ -191,15 +190,13 @@ module design_top_wrapper #(
     wire[23:0]  S_vision_rgb;
     wire        S_target_found;
     wire[23:0]  S_target_pixels;
-<<<<<<< Updated upstream
     wire[1:0]   S_vision_mode;
-=======
-    wire[2:0]   S_vision_mode;
     wire        S_raw_sharpen_enable;
     wire        S_template_command;
->>>>>>> Stashed changes
     wire[1:0]   S_exposure_level; //【HX1P35A-移植适配】KEY3 选择的手动曝光档位（HDMI 像素时钟域）。
     wire        S_auto_exposure; //【HX1P35A-移植适配】自动曝光模式，上电默认开启。
+    wire S_calibrate,S_invalidate_calibration,S_cal_busy,S_cal_valid,S_cal_error;
+    wire [1:0] S_cal_status=S_cal_busy?2'd1:(S_cal_error?2'd3:(S_cal_valid?2'd2:2'd0));
     wire[7:0]   S_frame_luma; //【HX1P35A-移植适配】视频帧全局平均亮度。
     wire[11:0]  S_frame_highlights; //【HX1P35A-移植适配】视频帧接近饱和的高光样点数量。
     wire[11:0]  S_frame_shadows; //【HX1P35A-移植适配】视频帧深暗样点数量，用于亮暗共存测光。
@@ -259,7 +256,12 @@ module design_top_wrapper #(
 	
 	
     assign S_rst_n 		= S_pll_lock && I_rst_n; //【HX1P35A-移植适配】板载 KEY1 同步控制全局低有效复位。
-    assign S_hdmi_rst_n = S_pll_lock && I_rst_n; //【HX1P35A-移植适配】HDMI/视觉流水线同时响应板载复位键。
+    // Isolated closure experiment: reset assertion shared; release per domain.
+    hx_reset_release u_reset_cfg(S_24m_clk,S_rst_n,S_cfg_rst_n);
+    hx_reset_release u_reset_csi(S_csi_rx_clk,S_rst_n,S_csi_logic_rst_n);
+    hx_reset_release u_reset_ddr(S_ddr_clk,S_rst_n,S_ddr_logic_rst_n);
+    hx_reset_release u_reset_hdmi(S_hdmi_pixel_clk,S_rst_n,S_hdmi_rst_n);
+    hx_reset_release u_reset_lp(S_100m_clk,S_rst_n,S_lp_rst_n);
 
     //【HX1P35A-移植适配】目标由无到有时播放一次约 1s 的 2kHz 告警音；目标持续存在不会反复触发。
     always @(posedge S_hdmi_pixel_clk or negedge S_hdmi_rst_n) begin
@@ -290,92 +292,92 @@ module design_top_wrapper #(
         end
     end
 
-    always @(posedge S_csi_rx_clk or negedge S_rst_n) begin
-        if(!S_rst_n)
+    always @(posedge S_csi_rx_clk or negedge S_csi_logic_rst_n) begin
+        if(!S_csi_logic_rst_n)
             S_dbg_raw_seen <= 1'b0;
         else if(S_raw10_frame_start | S_axis_tvalid)
             S_dbg_raw_seen <= 1'b1;
     end
 
-    always @(posedge S_csi_rx_clk or negedge S_rst_n) begin
-        if(!S_rst_n)
+    always @(posedge S_csi_rx_clk or negedge S_csi_logic_rst_n) begin
+        if(!S_csi_logic_rst_n)
             S_dbg_isp_seen <= 1'b0;
         else if(S_ISP_O_tuser | S_ISP_O_tvalid)
             S_dbg_isp_seen <= 1'b1;
     end
 
-    always @(posedge S_ddr_clk or negedge S_rst_n) begin
-        if(!S_rst_n)
+    always @(posedge S_ddr_clk or negedge S_ddr_logic_rst_n) begin
+        if(!S_ddr_logic_rst_n)
             S_dbg_ddr_wr_seen <= 1'b0;
         else if(S_vi_ddr_wr_en)
             S_dbg_ddr_wr_seen <= 1'b1;
     end
 
-    always @(posedge S_ddr_clk or negedge S_rst_n) begin
-        if(!S_rst_n)
+    always @(posedge S_ddr_clk or negedge S_ddr_logic_rst_n) begin
+        if(!S_ddr_logic_rst_n)
             S_dbg_ddr_rd_seen <= 1'b0;
         else if(S_ddr_user_rd_valid)
             S_dbg_ddr_rd_seen <= 1'b1;
     end
 
-    always @(posedge S_24m_clk or negedge S_rst_n) begin
-        if(!S_rst_n)
+    always @(posedge S_24m_clk or negedge S_cfg_rst_n) begin
+        if(!S_cfg_rst_n)
             S_dbg_cam_cfg_seen <= 1'b0;
         else if(S_cam_cfg_done)
             S_dbg_cam_cfg_seen <= 1'b1;
     end
 
-    always @(posedge S_csi_rx_clk or negedge S_rst_n) begin
-        if(!S_rst_n)
+    always @(posedge S_csi_rx_clk or negedge S_csi_logic_rst_n) begin
+        if(!S_csi_logic_rst_n)
             S_dbg_hs_seen <= 1'b0;
         else if(S_hs_rx_valid)
             S_dbg_hs_seen <= 1'b1;
     end
 
-    always @(posedge S_csi_rx_clk or negedge S_rst_n) begin
-        if(!S_rst_n)
+    always @(posedge S_csi_rx_clk or negedge S_csi_logic_rst_n) begin
+        if(!S_csi_logic_rst_n)
             S_dbg_csi_seen <= 1'b0;
         else if(S_csi_frame_start | S_csi_valid)
             S_dbg_csi_seen <= 1'b1;
     end
 
-    always @(posedge S_csi_rx_clk or negedge S_rst_n) begin
-        if(!S_rst_n)
+    always @(posedge S_csi_rx_clk or negedge S_csi_logic_rst_n) begin
+        if(!S_csi_logic_rst_n)
             S_dbg_raw10_seen <= 1'b0;
         else if(S_raw10_frame_start | S_raw10_valid)
             S_dbg_raw10_seen <= 1'b1;
     end
 
-    always @(posedge S_csi_rx_clk or negedge S_rst_n) begin
-        if(!S_rst_n)
+    always @(posedge S_csi_rx_clk or negedge S_csi_logic_rst_n) begin
+        if(!S_csi_logic_rst_n)
             S_dbg_isp_fs_seen <= 1'b0;
         else if(S_ISP_O_tuser)
             S_dbg_isp_fs_seen <= 1'b1;
     end
 
-    always @(posedge S_csi_rx_clk or negedge S_rst_n) begin
-        if(!S_rst_n)
+    always @(posedge S_csi_rx_clk or negedge S_csi_logic_rst_n) begin
+        if(!S_csi_logic_rst_n)
             S_dbg_isp_valid_seen <= 1'b0;
         else if(S_ISP_O_tvalid)
             S_dbg_isp_valid_seen <= 1'b1;
     end
 
-    always @(posedge S_ddr_clk or negedge S_rst_n) begin
-        if(!S_rst_n)
+    always @(posedge S_ddr_clk or negedge S_ddr_logic_rst_n) begin
+        if(!S_ddr_logic_rst_n)
             S_dbg_ddr_req_seen <= 1'b0;
         else if(S_vi_ddr_wr_en)
             S_dbg_ddr_req_seen <= 1'b1;
     end
 
-    always @(posedge S_ddr_clk or negedge S_rst_n) begin
-        if(!S_rst_n)
+    always @(posedge S_ddr_clk or negedge S_ddr_logic_rst_n) begin
+        if(!S_ddr_logic_rst_n)
             S_dbg_ddr_ready_seen <= 1'b0;
         else if(S_ddr_user_ready)
             S_dbg_ddr_ready_seen <= 1'b1;
     end
 
-    always @(posedge S_ddr_clk or negedge S_video_out_rst_n) begin
-        if(!S_video_out_rst_n)
+    always @(posedge S_ddr_clk or negedge S_ddr_logic_rst_n) begin
+        if(!S_ddr_logic_rst_n)
             S_dbg_rd_req_seen <= 1'b0;
         else if(S_video_out_vsync)
             S_dbg_rd_req_seen <= 1'b0;
@@ -383,8 +385,8 @@ module design_top_wrapper #(
             S_dbg_rd_req_seen <= 1'b1;
     end
 
-    always @(posedge S_ddr_clk or negedge S_video_out_rst_n) begin
-        if(!S_video_out_rst_n)
+    always @(posedge S_ddr_clk or negedge S_ddr_logic_rst_n) begin
+        if(!S_ddr_logic_rst_n)
             S_dbg_rd_valid_seen <= 1'b0;
         else if(S_video_out_vsync)
             S_dbg_rd_valid_seen <= 1'b0;
@@ -392,8 +394,8 @@ module design_top_wrapper #(
             S_dbg_rd_valid_seen <= 1'b1;
     end
 
-    always @(posedge S_hdmi_pixel_clk or negedge S_video_out_rst_n) begin
-        if(!S_video_out_rst_n)
+    always @(posedge S_hdmi_pixel_clk or negedge S_hdmi_rst_n) begin
+        if(!S_hdmi_rst_n)
             S_dbg_rd_nonzero_seen <= 1'b0;
         else if(S_video_out_vsync)
             S_dbg_rd_nonzero_seen <= 1'b0;
@@ -401,29 +403,29 @@ module design_top_wrapper #(
             S_dbg_rd_nonzero_seen <= 1'b1;
     end
 
-    always @(posedge S_ddr_clk or negedge S_rst_n) begin
-        if(!S_rst_n)
+    always @(posedge S_ddr_clk or negedge S_ddr_logic_rst_n) begin
+        if(!S_ddr_logic_rst_n)
             S_dbg_mc_init_seen <= 1'b0;
         else if(S_init_calib_complete)
             S_dbg_mc_init_seen <= 1'b1;
     end
 
-    always @(posedge S_ddr_clk or negedge S_rst_n) begin
-        if(!S_rst_n)
+    always @(posedge S_ddr_clk or negedge S_ddr_logic_rst_n) begin
+        if(!S_ddr_logic_rst_n)
             S_dbg_mc_app_rdy_seen <= 1'b0;
         else if(S_mc_dbg_app_rdy)
             S_dbg_mc_app_rdy_seen <= 1'b1;
     end
 
-    always @(posedge S_ddr_clk or negedge S_rst_n) begin
-        if(!S_rst_n)
+    always @(posedge S_ddr_clk or negedge S_ddr_logic_rst_n) begin
+        if(!S_ddr_logic_rst_n)
             S_dbg_mc_wdf_rdy_seen <= 1'b0;
         else if(S_mc_dbg_wdf_rdy)
             S_dbg_mc_wdf_rdy_seen <= 1'b1;
     end
 
-    always @(posedge S_ddr_clk or negedge S_rst_n) begin
-        if(!S_rst_n)
+    always @(posedge S_ddr_clk or negedge S_ddr_logic_rst_n) begin
+        if(!S_ddr_logic_rst_n)
             S_dbg_mc_cmd_pop_seen <= 1'b0;
         else if(S_mc_dbg_cmd_pop)
             S_dbg_mc_cmd_pop_seen <= 1'b1;
@@ -496,8 +498,8 @@ module design_top_wrapper #(
     };
 	
 	//【HX1P35A-移植适配】SC520 上电后先保持 PWDNB/XSHUTDN 为低，再释放并等待内部上电完成。
-	always @(posedge S_24m_clk or negedge S_pll_lock) begin //【HX1P35A-移植适配】
-		if (!S_pll_lock) begin //【HX1P35A-移植适配】
+	always @(posedge S_24m_clk or negedge S_cfg_rst_n) begin //【HX1P35A-移植适配】
+		if (!S_cfg_rst_n) begin //【HX1P35A-移植适配】
 			S_cam_power_cnt <= 18'd0; //【HX1P35A-移植适配】
 			S_cam_pwdnb <= 1'b0; //【HX1P35A-移植适配】
 			S_cam_i2c_ready <= 1'b0; //【HX1P35A-移植适配】
@@ -535,12 +537,9 @@ module design_top_wrapper #(
 	
 
   
-  ae_set #(
-      .ANTI_FLICKER(ANTI_FLICKER), //【防频闪】把曝光上限锁到市电纹波周期整数倍。
-      .AE_EXPOSURE_MAX_FLICKER(AE_EXPOSURE_MAX_FLICKER)
-  ) u_ae_set (
+  ae_set u_ae_set (
       .I_clk(S_24m_clk),
-      .I_rst(~S_rst_n),
+      .I_rst(~S_cfg_rst_n),
       .I_btn(4'b1111), //【HX1P35A-移植适配】实体按键专用于视觉控制，避免切换模式时同时改变摄像头曝光。
       .I_auto_enable(S_auto_exposure), //【HX1P35A-移植适配】自动/手动曝光状态在 ae_set 内同步到 24 MHz 域。
       .I_manual_exposure_level(S_exposure_level), //【HX1P35A-移植适配】自动关闭时使用 KEY3 选择的固定档位。
@@ -571,9 +570,29 @@ module design_top_wrapper #(
       .O_ae_cfg_done(S_ae_cfg_done),  //AE配置完成 //【HX1P35A-移植适配】
       .O_sensor_id(S_cam_sensor_id), //【HX1P35A-移植适配】
       .O_sensor_id_ok(S_cam_sensor_id_ok), //【HX1P35A-移植适配】
-      .O_iic_error(S_cam_i2c_error) //【HX1P35A-移植适配】
+      .O_iic_error(S_cam_i2c_error), //【HX1P35A-移植适配】
+      .I_applied_snapshot_ack(S_ae_applied_snapshot_ack),
+      .O_applied_snapshot_req(S_ae_applied_snapshot_req),
+      .O_applied_exposure_mailbox(S_ae_applied_mailbox),
+      .O_applied_gain_regs_mailbox(S_gain_applied_mailbox),
+      .O_applied_status_mailbox(S_ae_applied_status_mailbox),
+      .O_applied_has_value_mailbox(S_ae_applied_has_value_mailbox)
   );
-	
+
+  // Two-phase bundled-data snapshot. The 24 MHz source holds payload until ACK.
+  hx_sensor_applied_cdc u_sensor_applied_cdc (
+      .src_req_toggle(S_ae_applied_snapshot_req),
+      .src_exposure(S_ae_applied_mailbox),
+      .src_gain_regs(S_gain_applied_mailbox),
+      .src_status(S_ae_applied_status_mailbox),
+      .src_has_value(S_ae_applied_has_value_mailbox),
+      .dst_clk(S_hdmi_pixel_clk), .dst_rst_n(S_hdmi_rst_n),
+      .src_ack_toggle(S_ae_applied_snapshot_ack),
+      .dst_exposure(S_ae_applied_video), .dst_gain_regs(S_gain_applied_video),
+      .dst_status(S_ae_applied_status_video), .dst_has_value(S_ae_applied_has_value_video),
+      .dst_update_toggle(S_ae_applied_update_toggle)
+  );
+
     mipi_dphy_rx_ph1p_mipiio_wrapper#(
         .DPHY_RX_LOCATION      ( "DPHY0" ),
         .HS_EQUALIZER          ( "3dB"   ),//【HX1P35A-移植适配】SC520 828 Mbps/Lane 接收均衡。
@@ -625,7 +644,7 @@ module design_top_wrapper #(
  //csi 解码为RAW数据
 csi_unpacket_2lane u_csi_unpacket(
 .I_clk                 ( S_csi_rx_clk       ),
-.I_rst_n               ( S_rst_n        	),
+.I_rst_n               ( S_csi_logic_rst_n        	),
 .I_hs_valid            ( S_hs_rx_valid     ),
 .I_hs_data             ( S_hs_rx_data      ),
 
@@ -639,7 +658,7 @@ csi_unpacket_2lane u_csi_unpacket(
 //解码为RAW8
 raw10_unpacket_2lane u_raw10_unpacket (
 .I_clk  (S_csi_rx_clk),
-.I_rst_n(S_rst_n),
+.I_rst_n(S_csi_logic_rst_n),
 
 .I_csi_frame_start(S_csi_frame_start),
 .I_csi_frame_end  (S_csi_frame_end),
@@ -661,7 +680,7 @@ uial2axis #(
 ) 
 u_uial2axis (
 .I_native_clk(S_csi_rx_clk),
-.I_rst_n     (S_rst_n),
+.I_rst_n     (S_csi_logic_rst_n),
 .I_data      (S_raw10_data       ),
 .I_data_valid(S_raw10_valid      ),
 .I_data_start(S_raw10_frame_start),
@@ -701,9 +720,9 @@ assign S_raw_tuser  = S_axis_tuser;
 
 
 //ISP算法顶层模块
-isp_top u_isp_top (
+isp_top #(.FIXED_AWB(WHITE_FIELD_FIXED_AWB)) u_isp_top (
 .axi4s_video_aclk(S_csi_rx_clk),
-.I_rst_n         (S_rst_n),
+.I_rst_n         (S_csi_logic_rst_n),
 .I_tlast         (S_raw_tlast	),
 .I_tuser         (S_raw_tuser	),
 .I_tdata         (S_raw_tdata	),
@@ -751,7 +770,7 @@ isp_top u_isp_top (
     assign S_ddr_user_wr_data  = S_vi_ddr_wr_data;
 
 
-    assign S_video_out_rst_n = S_hdmi_rst_n;
+    assign S_video_out_rst_n = S_ddr_logic_rst_n;
 
     video_out u_video_out(
         .I_rst_n             ( S_video_out_rst_n    ),
@@ -774,32 +793,41 @@ isp_top u_isp_top (
     );
 
     //【HX1P35A-移植适配】KEY2 切换显示模式；KEY3 循环 AUTO/四档手动曝光；蜂鸣器由板载 SW5 控制。
-    hx_button_mode_ctrl u_hx_button_mode_ctrl(
+    hx_button_mode_ctrl #(.SELF_CALIBRATION(WHITE_FIELD_SELF_CAL),
+        .ENABLE_TEMPLATE_CONTROL(ENABLE_TEMPLATE_TRACKING)) u_hx_button_mode_ctrl(
         .I_clk(S_hdmi_pixel_clk), .I_rst_n(S_hdmi_rst_n), .I_button_n(I_button),
-        .O_mode(S_vision_mode), .O_alarm_enable(S_alarm_enable), .O_exposure_level(S_exposure_level), .O_auto_exposure(S_auto_exposure) //【HX1P35A-移植适配】
+        .I_cal_busy(S_cal_busy),.O_calibrate(S_calibrate),.O_invalidate_calibration(S_invalidate_calibration),
+        .O_mode(S_vision_mode), .O_alarm_enable(S_alarm_enable), .O_exposure_level(S_exposure_level),
+        .O_auto_exposure(S_auto_exposure), .O_raw_sharpen_enable(S_raw_sharpen_enable),
+        .O_template_command(S_template_command) // KEY3 short=exposure; hold=template lock/cancel.
     );
 
     //【HX1P35A-移植适配】不修改 MIPI、DDR 或 HDMI 驱动，仅处理 DDR 读出的 RGB888 像素流。
-    hx_pixel_stream_adapter u_hx_pixel_stream_adapter(
+    hx_pixel_stream_adapter #(
+        .LSC_ENABLE(LSC_ENABLE), .LSC_GAIN_FILE(LSC_GAIN_FILE),
+        .LSC_BLACK_LEVEL(LSC_BLACK_LEVEL),.SELF_CALIBRATION(WHITE_FIELD_SELF_CAL),
+        .SOFT_PRESET(WHITE_FIELD_SOFT_PRESET)
+    ) u_hx_pixel_stream_adapter(
         .I_clk(S_hdmi_pixel_clk), .I_rst_n(S_hdmi_rst_n),
         .I_vsync(S_hdmi_vsync), .I_hsync(S_hdmi_hsync), .I_de(S_hdmi_de),
         .I_user(S_hdmi_user), .I_last(S_hdmi_last), .I_rgb(S_video_rd_data),
+        .I_calibrate(S_calibrate),.I_invalidate_calibration(S_invalidate_calibration),
+        .O_cal_busy(S_cal_busy),.O_cal_valid(S_cal_valid),.O_cal_error(S_cal_error),
         .O_vsync(S_alg_vsync), .O_hsync(S_alg_hsync), .O_de(S_alg_de),
         .O_user(S_alg_user), .O_last(S_alg_last), .O_rgb(S_alg_rgb)
     );
 
     //【HX1P35A-移植适配】纯 RTL 视觉功能，位于算法适配层与 HDMI 混合器之间。
-<<<<<<< Updated upstream
-    hx_vision_pipeline u_hx_vision_pipeline(
-=======
     hx_vision_pipeline #(.ENABLE_CAL_STATUS(WHITE_FIELD_SELF_CAL),
-        .ENABLE_TEMPLATE_TRACKING(ENABLE_TEMPLATE_TRACKING),
-        .TEMPLATE_DISP_SMOOTH_SHIFT(TEMPLATE_DISP_SMOOTH_SHIFT),
-        .TEMPLATE_DISP_DEADBAND(TEMPLATE_DISP_DEADBAND)) u_hx_vision_pipeline(
->>>>>>> Stashed changes
+        .ENABLE_TEMPLATE_TRACKING(ENABLE_TEMPLATE_TRACKING)) u_hx_vision_pipeline(
         .I_clk(S_hdmi_pixel_clk), .I_rst_n(S_hdmi_rst_n),
         .I_vsync(S_alg_vsync), .I_hsync(S_alg_hsync), .I_de(S_alg_de),
-        .I_user(S_alg_user), .I_last(S_alg_last), .I_rgb(S_alg_rgb), .I_mode(S_vision_mode), .I_exposure_level(S_exposure_level), .I_auto_exposure(S_auto_exposure), //【HX1P35A-移植适配】OSD 显示自动或手动曝光状态。
+        .I_user(S_alg_user), .I_last(S_alg_last), .I_rgb(S_alg_rgb), .I_mode(S_vision_mode), .I_exposure_level(S_exposure_level), .I_auto_exposure(S_auto_exposure),
+        .I_raw_sharpen_enable(S_raw_sharpen_enable),
+        .I_template_command(S_template_command),
+        .I_applied_exposure(S_ae_applied_video), .I_applied_gain_regs(S_gain_applied_video),
+        .I_applied_status(S_ae_applied_status_video), .I_applied_has_value(S_ae_applied_has_value_video),
+        .I_applied_update_toggle(S_ae_applied_update_toggle), .I_cal_status(S_cal_status),
         .O_vsync(S_vision_vsync), .O_hsync(S_vision_hsync), .O_de(S_vision_de),
         .O_user(S_vision_user), .O_last(S_vision_last), .O_rgb(S_vision_rgb),
         .O_target_found(S_target_found), .O_target_pixels(S_target_pixels),
@@ -810,7 +838,7 @@ isp_top u_isp_top (
 
     mc_to_user_interface u_mc_to_user_interface(
         .I_clk                   ( S_ddr_clk               ),
-        .I_rst_n                 ( S_rst_n                 ),
+        .I_rst_n                 ( S_ddr_logic_rst_n                 ),
 
         .I_ddr_user_wr_en        ( S_ddr_user_wr_en        ),
         .I_ddr_user_rd_en        ( S_ddr_user_rd_en        ),
@@ -837,8 +865,8 @@ isp_top u_isp_top (
 
 
     ph1p35_324_ddr_wrapper u_ph1p35_324_ddr_wrapper(
-        .I_sys_clk              ( I_sys_clk              ),
-        .I_sys_rst_n            ( S_rst_n                ),
+        .I_sys_clk              ( S_100m_clk             ),
+        .I_sys_rst_n            ( S_lp_rst_n             ),
 
         .O_ddr_clk              ( S_ddr_clk              ),
         .O_init_calib_complete  ( S_init_calib_complete  ),

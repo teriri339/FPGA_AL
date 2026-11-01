@@ -46,7 +46,7 @@
                 <ipxact:configurableElementValue referenceId="ENABLE_DDR4">0</ipxact:configurableElementValue>
                 <ipxact:configurableElementValue referenceId="ENABLE_TWO_TYPE">1</ipxact:configurableElementValue>
                 <ipxact:configurableElementValue referenceId="GEN_RESET">0</ipxact:configurableElementValue>
-                <ipxact:configurableElementValue referenceId="tCK">1876</ipxact:configurableElementValue>
+                <ipxact:configurableElementValue referenceId="tCK">1875</ipxact:configurableElementValue>
                 <ipxact:configurableElementValue referenceId="CS_WIDTH">1</ipxact:configurableElementValue>
                 <ipxact:configurableElementValue referenceId="CKE_WIDTH">1</ipxact:configurableElementValue>
                 <ipxact:configurableElementValue referenceId="CK_WIDTH">1</ipxact:configurableElementValue>

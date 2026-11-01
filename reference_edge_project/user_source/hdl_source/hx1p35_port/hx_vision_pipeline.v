@@ -2,18 +2,9 @@
 //【HX1P35A-移植适配】HDMI 像素域视觉流水线：灰度、3x3 Sobel、三原色目标、平滑跟踪框和信息 OSD。
 module hx_vision_pipeline #(
     parameter IMAGE_WIDTH = 1280,
+    parameter IMAGE_HEIGHT = 720,
+    parameter ENABLE_TEMPLATE_TRACKING = 0,
     parameter MIN_TARGET_PIXELS = 24'd800,
-<<<<<<< Updated upstream
-    parameter SOBEL_THRESHOLD_DARK = 12'd40, //【HX1P35A-移植适配】暗区弱边缘门限适度降低，补回人脸明暗、衣纹和墙板接缝。
-    parameter SOBEL_THRESHOLD_NORMAL = 12'd60, //【HX1P35A-移植适配】普通室内照明增强文字、线缆和人物内部纹理。
-    parameter SOBEL_THRESHOLD_BRIGHT = 12'd64, //【HX1P35A-移植适配】亮区低对比门限降低，使灯管与浅色天花板之间的边界进入候选。
-    parameter SOBEL_STRONG_THRESHOLD_DARK = 12'd72, //【HX1P35A-移植适配】暗区增加可靠锚点，Gaussian、NMS 与连续性判断共同抑制噪声。
-    parameter SOBEL_STRONG_THRESHOLD_NORMAL = 12'd96, //【HX1P35A-移植适配】普通照明补回主体细节，同时仍由 NMS 限制线宽。
-    parameter SOBEL_STRONG_THRESHOLD_BRIGHT = 12'd112, //【HX1P35A-移植适配】降低亮区强门限，避免灯管轮廓因局部高亮分类而消失。
-    parameter SOBEL_DETAIL_THRESHOLD_DARK = 12'd112, //【HX1P35A-移植适配】暗光下恢复较强的非极大值邻边，增强头发和衣物纹理。
-    parameter SOBEL_DETAIL_THRESHOLD_NORMAL = 12'd144, //【HX1P35A-移植适配】普通照明细节补偿门限兼顾密度和噪声。
-    parameter SOBEL_DETAIL_THRESHOLD_BRIGHT = 12'd176 //【HX1P35A-移植适配】亮区保留灯管、窗框等连续细节，避免原 256 门限过度删除。
-=======
     // Mild Canny-only noise tuning; no change to exposure or RGB display.
     parameter SOBEL_THRESHOLD_DARK = 12'd48,
     parameter SOBEL_THRESHOLD_NORMAL = 12'd64,
@@ -29,34 +20,30 @@ module hx_vision_pipeline #(
     parameter ENABLE_DISPLAY_DENOISE = 1'b0,
     parameter ENABLE_SHADOW_LIFT = 1'b0,
     parameter ENABLE_RAW_SHARPEN = 1'b1,
-    parameter [3:0] GRAD_SHIFT = 4'd2, //【GRAD 模式】Sobel 幅值右移位数；0 最亮、3 最暗，默认 2。
     parameter [7:0] RAW_SHARPEN_NOISE_GATE = 8'd6,
     parameter [7:0] RAW_SHARPEN_MAX_DELTA = 8'd8,
     parameter integer RAW_SHARPEN_GAIN_SHIFT = 1,
     // Acquire at the original threshold; a locked target may use a lower one.
     parameter TARGET_RELEASE_PIXELS = (MIN_TARGET_PIXELS > 1) ? (MIN_TARGET_PIXELS >> 1) : 1,
-    parameter integer TARGET_HOLD_FRAMES = 10, // Hold ten missed frames; lose lock on the eleventh. Zero disables holding.
-    //【抖动抑制】模板跟踪框显示坐标一阶逼近参数（只影响 OSD 画框，不影响搜索与判定）。
-    // 置 0 可关闭平滑，使 template_cx/cy 严格等于跟踪中心（回归测试用）。
-    parameter integer TEMPLATE_DISP_SMOOTH_SHIFT = 2,
-    parameter integer TEMPLATE_DISP_DEADBAND = 2,
-    //【过曝检测】逐通道削顶门限。旧实现只看 BT.601 灰度 >= 245，暖光/单色高亮场景下
-    // 灰度可能只有 210 左右（例如 R=255,G=200,B=180 时灰度仅 214），AE 完全看不见这类
-    // 削顶，于是越调越亮直到整片死白。改为"任一通道接近削顶且整体亮度不低"。
-    parameter [7:0] HIGHLIGHT_CHANNEL_LEVEL = 8'd250, // 单通道削顶门限，取满量程 255 的 98%。
-    parameter [7:0] HIGHLIGHT_LUMA_GATE = 8'd180, // 参与削顶判定的最低整体亮度，用于排除纯色物体。
-    parameter [7:0] HIGHLIGHT_LUMA_LEVEL = 8'd245 // 原有灰度门限，保留用于中性灰近削顶场景。
->>>>>>> Stashed changes
+    parameter integer TARGET_HOLD_FRAMES = 10 // Hold ten missed frames; lose lock on the eleventh. Zero disables holding.
 ) (
     input wire I_clk, input wire I_rst_n,
     input wire I_vsync, input wire I_hsync, input wire I_de,
     input wire I_user, input wire I_last, input wire [23:0] I_rgb,
-    input wire [2:0] I_mode,
+    input wire [1:0] I_mode,
     input wire [1:0] I_exposure_level, //【HX1P35A-移植适配】在 HDMI OSD 中显示当前曝光档位。
     input wire I_auto_exposure, //【HX1P35A-移植适配】OSD 显示 AUTO 状态。
+    input wire I_raw_sharpen_enable, // 仅 RAW 显示生效；测光、颜色统计始终取锐化前数据。
+    input wire I_template_command,
+    input wire [15:0] I_applied_exposure, // 最近一次已完成并确认的 SC520 曝光寄存器值。
+    input wire [23:0] I_applied_gain_regs, // 0x3e09 / 0x3e06 / 0x3e07 已确认写入的原始寄存器字节。
+    input wire [1:0] I_applied_status, // 0=等待, 1=写入中, 2=已确认, 3=I2C 错误。
+    input wire I_applied_has_value,
+    input wire I_applied_update_toggle, // 同 HDMI 像素域握手快照更新翻转位。
+    input wire [1:0] I_cal_status,
     output reg O_vsync, output reg O_hsync, output reg O_de,
     output reg O_user, output reg O_last, output reg [23:0] O_rgb,
-    output reg O_target_found, output reg [23:0] O_target_pixels,
+    output reg O_target_found, output reg [23:0] O_target_pixels, // found=tracking lock (including HOLD); pixels=actual last-frame measurement.
     output reg [7:0] O_frame_luma, //【HX1P35A-移植适配】整帧稀疏采样平均亮度，供自动曝光使用。
     output reg [11:0] O_frame_highlights, //【HX1P35A-移植适配】逐帧接近饱和样点数量，供自动曝光保护高光。
     output reg [11:0] O_frame_shadows, //【HX1P35A-移植适配】逐帧深暗样点数量，防止高光保护把主体压成全黑。
@@ -74,28 +61,18 @@ module hx_vision_pipeline #(
 
     //【HX1P35A-移植适配】每 16 行、每 16 像素取样一次；3600 个样点除以 4096 得到 0~224 的稳定亮度量。
     wire luma_sample = I_de && (pix_x[3:0] == 4'd0) && (pix_y[3:0] == 4'd0); //【HX1P35A-移植适配】覆盖整幅画面而非局部亮点。
-    //【过曝检测】三通道取最大值：三个比较器加两个二选一，约 3 个 LUT6，无额外时序压力。
-    wire [7:0] max_channel = (I_rgb[23:16] >= I_rgb[15:8])
-        ? ((I_rgb[23:16] >= I_rgb[7:0]) ? I_rgb[23:16] : I_rgb[7:0])
-        : ((I_rgb[15:8]  >= I_rgb[7:0]) ? I_rgb[15:8]  : I_rgb[7:0]);
-    //【过曝检测】"某通道削顶 + 整体亮度不低" 才算过曝。
-    //   - 暖光灯 R=255/G=200/B=180：max=255 且灰度 214 >= 180 → 判为过曝（旧实现漏判）。
-    //   - 纯红物体 R=255/G=20/B=20：max=255 但灰度仅 90 < 180 → 不判为过曝，避免 AE 把
-    //     大面积饱和色物体误当削顶而压暗整幅画面。
-    wire channel_clipped = (max_channel >= HIGHLIGHT_CHANNEL_LEVEL) && (gray >= HIGHLIGHT_LUMA_GATE);
-    wire highlight_pixel = channel_clipped || (gray >= HIGHLIGHT_LUMA_LEVEL); // 中性灰近削顶仍按原门限统计。
-    wire highlight_sample = luma_sample && highlight_pixel; //【HX1P35A-移植适配】只统计真正接近削顶的高光，避免把正常浅色墙面误作过曝。
+    wire highlight_sample = luma_sample && (gray >= 8'd245); //【HX1P35A-移植适配】只统计真正接近削顶的高光，避免把正常浅色墙面误作过曝。
     wire shadow_sample = luma_sample && (gray <= 8'd48); //【HX1P35A-移植适配】统计缺少可辨纹理的深暗区域，用于亮暗共存测光。
     reg [19:0] frame_luma_sum; //【HX1P35A-移植适配】最大 3600*255，小于 20 位上限。
     reg [11:0] frame_highlight_count; //【HX1P35A-移植适配】3600 个样点的高光计数。
     reg [11:0] frame_shadow_count; //【HX1P35A-移植适配】3600 个样点的深暗计数。
 
-    //【HX1P35A-移植适配】第一组两行缓存构成 3x3 Gaussian 窗口，先抑制传感器噪点和高频细碎纹理。
-    reg [7:0] raw_gray_line1 [0:IMAGE_WIDTH-1]; //【HX1P35A-移植适配】Gaussian 原始灰度上一行缓存。
-    reg [7:0] raw_gray_line2 [0:IMAGE_WIDTH-1]; //【HX1P35A-移植适配】Gaussian 原始灰度上两行缓存。
+    //【资源优化】把同拍访问的两行原始灰度和颜色候选打包进一组显式 ERAM；功能与原三组分布式行缓存一致。
+    wire [17:0] raw_line_rd;
+    wire [17:0] raw_line_wr;
     reg [7:0] raw_top_d2, raw_top_d1, raw_mid_d2, raw_mid_d1, raw_bot_d2, raw_bot_d1; //【HX1P35A-移植适配】Gaussian 3x3 滑动窗口。
-    wire [7:0] raw_top_right = (pix_x < IMAGE_WIDTH) ? raw_gray_line2[pix_x] : 8'd0; //【HX1P35A-移植适配】Gaussian 窗口右上像素。
-    wire [7:0] raw_mid_right = (pix_x < IMAGE_WIDTH) ? raw_gray_line1[pix_x] : 8'd0; //【HX1P35A-移植适配】Gaussian 窗口右中像素。
+    wire [7:0] raw_top_right = (pix_x < IMAGE_WIDTH) ? raw_line_rd[17:10] : 8'd0; //【HX1P35A-移植适配】Gaussian 窗口右上像素。
+    wire [7:0] raw_mid_right = (pix_x < IMAGE_WIDTH) ? raw_line_rd[9:2] : 8'd0; //【HX1P35A-移植适配】Gaussian 窗口右中像素。
     wire [11:0] gaussian_sum = {4'd0,raw_top_d2} + ({4'd0,raw_top_d1} << 1) + {4'd0,raw_top_right} +
                                ({4'd0,raw_mid_d2} << 1) + ({4'd0,raw_mid_d1} << 2) + ({4'd0,raw_mid_right} << 1) +
                                {4'd0,raw_bot_d2} + ({4'd0,raw_bot_d1} << 1) + {4'd0,gray}; //【HX1P35A-移植适配】1-2-1 Gaussian 核，总权重 16。
@@ -103,44 +80,42 @@ module hx_vision_pipeline #(
     reg [7:0] gaussian_gray_q; //【HX1P35A-移植适配】Gaussian 输出寄存一级，切断平滑与 Sobel 之间的长组合路径。
     reg [10:0] gaussian_x_q, gaussian_y_q; //【HX1P35A-移植适配】随 Gaussian 数据延迟的像素坐标。
     reg gaussian_de_q; //【HX1P35A-移植适配】随 Gaussian 数据延迟的有效标志。
+    reg [7:0] gaussian_gray_d;
+    reg [10:0] gaussian_x_d, gaussian_y_d;
+    reg gaussian_de_d;
 
-    //【HX1P35A-移植适配】第二组两行缓存对 Gaussian 输出执行真正的 3x3 Sobel。
-    reg [7:0] gray_line1 [0:IMAGE_WIDTH-1];
-    reg [7:0] gray_line2 [0:IMAGE_WIDTH-1];
+    //【资源优化】Gaussian、Sobel/NMS 和双阈值滞后均使用相同地址，合并为一组 46 位 ERAM 行状态。
+    wire [45:0] edge_line_rd;
+    reg [45:0] edge_line_rd_q; //【资源优化】锁存 ERAM 读数据，将半周期读路径切成完整一拍的算法路径。
     reg [7:0] top_d2, top_d1, mid_d2, mid_d1, bot_d2, bot_d1;
-    wire [7:0] top_right = (gaussian_x_q < IMAGE_WIDTH) ? gray_line2[gaussian_x_q] : 8'd0; //【HX1P35A-移植适配】按流水坐标读取 Gaussian 上两行。
-    wire [7:0] mid_right = (gaussian_x_q < IMAGE_WIDTH) ? gray_line1[gaussian_x_q] : 8'd0; //【HX1P35A-移植适配】按流水坐标读取 Gaussian 上一行。
-    wire [10:0] gx_pos = {3'd0,top_right} + ({3'd0,mid_right} << 1) + {3'd0,gaussian_gray_q}; //【HX1P35A-移植适配】Sobel 右下输入使用寄存后的 Gaussian 像素。
+    wire [7:0] top_right = (gaussian_x_d < IMAGE_WIDTH) ? edge_line_rd_q[45:38] : 8'd0; //【HX1P35A-移植适配】按流水坐标读取 Gaussian 上两行。
+    wire [7:0] mid_right = (gaussian_x_d < IMAGE_WIDTH) ? edge_line_rd_q[37:30] : 8'd0; //【HX1P35A-移植适配】按流水坐标读取 Gaussian 上一行。
+    wire [10:0] gx_pos = {3'd0,top_right} + ({3'd0,mid_right} << 1) + {3'd0,gaussian_gray_d}; //【HX1P35A-移植适配】Sobel 右下输入使用寄存后的 Gaussian 像素。
     wire [10:0] gx_neg = {3'd0,top_d2} + ({3'd0,mid_d2} << 1) + {3'd0,bot_d2};
     wire [10:0] gy_pos = {3'd0,top_d2} + ({3'd0,top_d1} << 1) + {3'd0,top_right};
-    wire [10:0] gy_neg = {3'd0,bot_d2} + ({3'd0,bot_d1} << 1) + {3'd0,gaussian_gray_q}; //【HX1P35A-移植适配】Sobel 下行输入使用寄存后的 Gaussian 像素。
+    wire [10:0] gy_neg = {3'd0,bot_d2} + ({3'd0,bot_d1} << 1) + {3'd0,gaussian_gray_d}; //【HX1P35A-移植适配】Sobel 下行输入使用寄存后的 Gaussian 像素。
     wire [10:0] gx_abs = (gx_pos >= gx_neg) ? (gx_pos - gx_neg) : (gx_neg - gx_pos);
     wire [10:0] gy_abs = (gy_pos >= gy_neg) ? (gy_pos - gy_neg) : (gy_neg - gy_pos);
     wire [11:0] sobel_mag = {1'b0,gx_abs} + {1'b0,gy_abs};
-    wire sobel_valid = gaussian_de_q && (gaussian_x_q >= 11'd4) && (gaussian_y_q >= 11'd4); //【HX1P35A-移植适配】使用延迟坐标判断 Gaussian 与 Sobel 两级窗口完整。
+    wire sobel_valid = gaussian_de_d && (gaussian_x_d >= 11'd4) && (gaussian_y_d >= 11'd4); //【资源优化】使用与 ERAM 读数据同拍的延迟坐标。
     wire local_dark_region = (top_d2 < 8'd96); //【HX1P35A-移植适配】top_d2 与 NMS 中心梯度对齐，明窗与暗墙可分别选择门限。
     wire local_bright_region = (top_d2 >= 8'd176); //【HX1P35A-移植适配】局部高亮区域继续使用严格门限，防止窗格和灯具周围铺满噪声。
     wire [11:0] sobel_threshold = local_dark_region ? SOBEL_THRESHOLD_DARK :
                                   local_bright_region ? SOBEL_THRESHOLD_BRIGHT : SOBEL_THRESHOLD_NORMAL; //【HX1P35A-移植适配】按局部而非整帧亮度选择弱门限，保留同帧暗区细节。
     wire [11:0] sobel_strong_threshold = local_dark_region ? SOBEL_STRONG_THRESHOLD_DARK :
                                          local_bright_region ? SOBEL_STRONG_THRESHOLD_BRIGHT : SOBEL_STRONG_THRESHOLD_NORMAL; //【HX1P35A-移植适配】局部强门限为暗墙弱轮廓提供锚点。
-    wire [11:0] sobel_detail_threshold = local_dark_region ? SOBEL_DETAIL_THRESHOLD_DARK :
-                                         local_bright_region ? SOBEL_DETAIL_THRESHOLD_BRIGHT : SOBEL_DETAIL_THRESHOLD_NORMAL; //【HX1P35A-移植适配】非 NMS 强细节也按局部亮度选择，线宽策略保持不变。
     wire gx_dominant = {1'b0,gx_abs} >= ({1'b0,gy_abs} << 1); //【HX1P35A-移植适配】梯度接近水平方向，局部峰值沿左右比较。
     wire gy_dominant = {1'b0,gy_abs} >= ({1'b0,gx_abs} << 1); //【HX1P35A-移植适配】梯度接近垂直方向，局部峰值沿上下比较。
     wire gx_positive = (gx_pos >= gx_neg); //【HX1P35A-移植适配】保留 Gx 符号以区分两种对角方向。
     wire gy_positive = (gy_pos >= gy_neg); //【HX1P35A-移植适配】保留 Gy 符号以区分两种对角方向。
     wire [1:0] sobel_direction = gx_dominant ? 2'd0 : gy_dominant ? 2'd2 :
                                   ((gx_positive == gy_positive) ? 2'd1 : 2'd3); //【HX1P35A-移植适配】量化为 0/45/90/135 度四方向。
-    reg [11:0] mag_line1 [0:IMAGE_WIDTH-1]; //【HX1P35A-移植适配】保存上一行 Sobel 幅值，构成局部极大值窗口。
-    reg [11:0] mag_line2 [0:IMAGE_WIDTH-1]; //【HX1P35A-移植适配】保存上两行 Sobel 幅值，供纵向梯度峰值比较。
-    reg [1:0]   dir_line1 [0:IMAGE_WIDTH-1]; //【HX1P35A-移植适配】保存上一行四方向梯度编码。
     reg [11:0] mag_top_d2, mag_top_d1, mag_mid_d2, mag_mid_d1, mag_bot_d2, mag_bot_d1; //【HX1P35A-移植适配】Sobel 幅值 3x3 滑动窗口。
     reg [1:0] dir_mid_d2, dir_mid_d1; //【HX1P35A-移植适配】上一行相邻像素的四方向梯度编码。
-    wire [11:0] mag_top_right = (gaussian_x_q < IMAGE_WIDTH) ? mag_line2[gaussian_x_q] : 12'd0; //【HX1P35A-移植适配】按流水坐标读取局部极大值窗口右上幅值。
-    wire [11:0] mag_mid_right = (gaussian_x_q < IMAGE_WIDTH) ? mag_line1[gaussian_x_q] : 12'd0; //【HX1P35A-移植适配】按流水坐标读取局部极大值窗口右侧幅值。
-    wire [1:0] dir_mid_right = (gaussian_x_q < IMAGE_WIDTH) ? dir_line1[gaussian_x_q] : 2'd0; //【HX1P35A-移植适配】按流水坐标读取上一行四方向编码。
-    wire nms_valid = sobel_valid && (gaussian_x_q >= 11'd6) && (gaussian_y_q >= 11'd6); //【HX1P35A-移植适配】使用延迟坐标等待三级窗口全部完整。
+    wire [11:0] mag_top_right = (gaussian_x_d < IMAGE_WIDTH) ? edge_line_rd_q[29:18] : 12'd0; //【HX1P35A-移植适配】按流水坐标读取局部极大值窗口右上幅值。
+    wire [11:0] mag_mid_right = (gaussian_x_d < IMAGE_WIDTH) ? edge_line_rd_q[17:6] : 12'd0; //【HX1P35A-移植适配】按流水坐标读取局部极大值窗口右侧幅值。
+    wire [1:0] dir_mid_right = (gaussian_x_d < IMAGE_WIDTH) ? edge_line_rd_q[5:4] : 2'd0; //【HX1P35A-移植适配】按流水坐标读取上一行四方向编码。
+    wire nms_valid = sobel_valid && (gaussian_x_d >= 11'd6) && (gaussian_y_d >= 11'd6); //【HX1P35A-移植适配】使用延迟坐标等待三级窗口全部完整。
     reg nms_peak; //【HX1P35A-移植适配】四方向局部极大值判断结果。
     always @(*) begin
         case (dir_mid_d1)
@@ -152,40 +127,25 @@ module hx_vision_pipeline #(
     end
     wire weak_edge_pixel = nms_valid && nms_peak && (mag_mid_d1 >= sobel_threshold); //【HX1P35A-移植适配】细化后的弱边缘候选，用于补全低对比度轮廓。
     wire strong_edge_pixel = nms_valid && nms_peak && (mag_mid_d1 >= sobel_strong_threshold); //【HX1P35A-移植适配】强边缘作为滞后筛选锚点。
-    reg weak_line [0:IMAGE_WIDTH-1]; //【HX1P35A-移植适配】保存上一行弱边缘，用连续性恢复人物纹理和灯管等低对比结构。
-    reg weak_left, weak_above_left; //【HX1P35A-移植适配】当前行左邻及上一行左上弱边缘状态。
-    wire weak_above = (gaussian_x_q < IMAGE_WIDTH) ? weak_line[gaussian_x_q] : 1'b0; //【HX1P35A-移植适配】读取上一行同列弱边缘。
-    wire weak_above_right = (gaussian_x_q < IMAGE_WIDTH-1) ? weak_line[gaussian_x_q+1'b1] : 1'b0; //【HX1P35A-移植适配】读取上一行右上弱边缘，保留另一方向斜线。
-    wire weak_connected_to_weak = ((gaussian_x_q != 0) && weak_left) || weak_above || ((gaussian_x_q != 0) && weak_above_left) || weak_above_right; //【HX1P35A-移植适配】只有形成连续结构的弱边缘才可独立进入输出。
-    wire coherent_weak_edge = weak_edge_pixel && weak_connected_to_weak; //【HX1P35A-移植适配】恢复连续弱纹理，仍拒绝孤立的传感器噪点。
-    reg strong_line [0:IMAGE_WIDTH-1]; //【HX1P35A-移植适配】保存上一行强边缘，建立因果 3 邻域连接关系。
-    reg strong_left, strong_above_left; //【HX1P35A-移植适配】当前行左邻和上一行左上邻强边缘状态。
-    wire strong_above = (gaussian_x_q < IMAGE_WIDTH) ? strong_line[gaussian_x_q] : 1'b0; //【HX1P35A-移植适配】按流水坐标读取上一行同列强边缘。
-    wire strong_above_right = (gaussian_x_q < IMAGE_WIDTH-1) ? strong_line[gaussian_x_q+1'b1] : 1'b0; //【HX1P35A-移植适配】上一行右上像素尚未被本行覆盖，可补齐另一方向的斜线连接。
-    wire weak_connected_to_strong = ((gaussian_x_q != 0) && strong_left) || strong_above || ((gaussian_x_q != 0) && strong_above_left) || strong_above_right; //【HX1P35A-移植适配】使用完整的因果四邻域连接强弱边缘，减少斜向细节断裂。
-    wire edge_seed = strong_edge_pixel || (weak_edge_pixel && weak_connected_to_strong); //【HX1P35A-移植适配】第一步只接受强边缘及其直接相邻弱边缘。
-    reg bridge_line [0:IMAGE_WIDTH-1]; //【HX1P35A-移植适配】保存第一步边缘种子，仅供一次受控断点连接。
-    reg bridge_left, bridge_above_left; //【HX1P35A-移植适配】保存边缘种子的左邻与左上邻状态。
-    wire bridge_above = (gaussian_x_q < IMAGE_WIDTH) ? bridge_line[gaussian_x_q] : 1'b0; //【HX1P35A-移植适配】读取上一行同列边缘种子。
-    wire bridge_above_right = (gaussian_x_q < IMAGE_WIDTH-1) ? bridge_line[gaussian_x_q+1'b1] : 1'b0; //【HX1P35A-移植适配】补充右上方向的一次性弱边缘连接。
-    wire weak_connected_to_seed = ((gaussian_x_q != 0) && bridge_left) || bridge_above || ((gaussian_x_q != 0) && bridge_above_left) || bridge_above_right; //【HX1P35A-移植适配】允许弱边缘沿四个已到达方向延伸一个像素，但不无限传播。
-    wire edge_pixel = edge_seed || (weak_edge_pixel && weak_connected_to_seed); //【HX1P35A-移植适配】补齐短断点但不回写最终结果，阻止弱纹理无限传播。
     //【HX1P35A-移植适配】参考流式 Canny 的 3x3 行缓存做法，将双阈值候选延迟到窗口中心再判定。
     // 这样弱边能看到右侧、下侧的强边锚点，补足仅按扫描方向判断时容易丢失的灯管、发丝和斜线。
-    reg weak_hyst_line1 [0:IMAGE_WIDTH-1], weak_hyst_line2 [0:IMAGE_WIDTH-1];
-    reg strong_hyst_line1 [0:IMAGE_WIDTH-1], strong_hyst_line2 [0:IMAGE_WIDTH-1];
     reg weak_hyst_top_d2, weak_hyst_top_d1, weak_hyst_mid_d2, weak_hyst_mid_d1, weak_hyst_bot_d2, weak_hyst_bot_d1;
     reg strong_hyst_top_d2, strong_hyst_top_d1, strong_hyst_mid_d2, strong_hyst_mid_d1, strong_hyst_bot_d2, strong_hyst_bot_d1;
-    wire weak_hyst_top_right = (gaussian_x_q < IMAGE_WIDTH) ? weak_hyst_line2[gaussian_x_q] : 1'b0;
-    wire weak_hyst_mid_right = (gaussian_x_q < IMAGE_WIDTH) ? weak_hyst_line1[gaussian_x_q] : 1'b0;
-    wire strong_hyst_top_right = (gaussian_x_q < IMAGE_WIDTH) ? strong_hyst_line2[gaussian_x_q] : 1'b0;
-    wire strong_hyst_mid_right = (gaussian_x_q < IMAGE_WIDTH) ? strong_hyst_line1[gaussian_x_q] : 1'b0;
-    wire hyst_window_valid = nms_valid && (gaussian_x_q >= 11'd8) && (gaussian_y_q >= 11'd8); //【HX1P35A-移植适配】等待候选的完整 3x3 窗口，边界不引用上一帧残留。
+    wire weak_hyst_top_right = (gaussian_x_d < IMAGE_WIDTH) ? edge_line_rd_q[3] : 1'b0;
+    wire weak_hyst_mid_right = (gaussian_x_d < IMAGE_WIDTH) ? edge_line_rd_q[2] : 1'b0;
+    wire strong_hyst_top_right = (gaussian_x_d < IMAGE_WIDTH) ? edge_line_rd_q[1] : 1'b0;
+    wire strong_hyst_mid_right = (gaussian_x_d < IMAGE_WIDTH) ? edge_line_rd_q[0] : 1'b0;
+    wire [45:0] edge_line_wr = {edge_line_rd_q[37:30], gaussian_gray_d,
+                                edge_line_rd_q[17:6], sobel_mag, sobel_direction,
+                                edge_line_rd_q[2], weak_edge_pixel,
+                                edge_line_rd_q[0], strong_edge_pixel};
+    wire hyst_window_valid = nms_valid && (gaussian_x_d >= 11'd8) && (gaussian_y_d >= 11'd8); //【HX1P35A-移植适配】等待候选的完整 3x3 窗口，边界不引用上一帧残留。
     wire strong_hyst_neighborhood = strong_hyst_top_d2 || strong_hyst_top_d1 || strong_hyst_top_right ||
                                     strong_hyst_mid_d2 || strong_hyst_mid_right ||
                                     strong_hyst_bot_d2 || strong_hyst_bot_d1 || strong_edge_pixel; //【HX1P35A-移植适配】中心以外的八个方向均可作为弱边的强锚点。
     wire weak_hyst_any_a = weak_hyst_top_d2 || weak_hyst_top_d1 || weak_hyst_top_right || weak_hyst_mid_d2;
     wire weak_hyst_any_b = weak_hyst_mid_right || weak_hyst_bot_d2 || weak_hyst_bot_d1 || weak_edge_pixel;
+    wire weak_hyst_has_neighbor = weak_hyst_any_a || weak_hyst_any_b; //【HX1P35A-移植适配】中心像素八邻域中至少存在一个双阈值候选，用于删除完全孤立的白色噪点。
     wire weak_hyst_pair_a = (weak_hyst_top_d2 && (weak_hyst_top_d1 || weak_hyst_top_right || weak_hyst_mid_d2)) ||
                             (weak_hyst_top_d1 && (weak_hyst_top_right || weak_hyst_mid_d2)) ||
                             (weak_hyst_top_right && weak_hyst_mid_d2);
@@ -194,33 +154,51 @@ module hx_vision_pipeline #(
                             (weak_hyst_bot_d1 && weak_edge_pixel);
     wire weak_hyst_has_two_neighbors = weak_hyst_pair_a || weak_hyst_pair_b || (weak_hyst_any_a && weak_hyst_any_b); //【HX1P35A-移植适配】并行判断八邻域至少两个弱候选，避免串行加法器进入像素关键路径。
     wire symmetric_hyst_edge = hyst_window_valid && weak_hyst_mid_d1 && strong_hyst_neighborhood &&
-                               weak_hyst_has_two_neighbors; //【HX1P35A-移植适配】仅救回连接强边且自身形成连续结构的弱边；强边由原通路输出，避免重复加粗孤立噪点。
-    wire detail_edge_pixel = nms_valid && (mag_mid_d1 >= sobel_detail_threshold); //【HX1P35A-移植适配】对足够强的梯度取消局部极大值限制，恢复参考效果中的粗亮细节。
-    wire edge_core = edge_pixel || symmetric_hyst_edge || coherent_weak_edge || detail_edge_pixel; //【HX1P35A-移植适配】融合因果连接、对称 8 邻域连接、连续弱纹理与强细节。
+                               weak_hyst_has_two_neighbors; //【HX1P35A-移植适配】仅救回连接强边且自身形成连续结构的弱边，拒绝无强锚点的弱纹理噪声。
+    wire supported_strong_edge = hyst_window_valid && strong_hyst_mid_d1 && weak_hyst_has_neighbor; //【HX1P35A-移植适配】强边中心若八邻域全黑则判为单点噪声并清零；存在一个邻居即保留，避免损伤细线端点。
+    wire horizontal_one_pixel_gap = weak_hyst_mid_d2 && weak_hyst_mid_right &&
+                                    (strong_hyst_mid_d2 || strong_hyst_mid_right); //【HX1P35A-移植适配】左右边缘相隔一个空点，且至少一侧是强边时补中间像素。
+    wire vertical_one_pixel_gap = weak_hyst_top_d1 && weak_hyst_bot_d1 &&
+                                  (strong_hyst_top_d1 || strong_hyst_bot_d1); //【HX1P35A-移植适配】上下方向的一像素断点连接。
+    wire diagonal_down_one_pixel_gap = weak_hyst_top_d2 && weak_edge_pixel &&
+                                       (strong_hyst_top_d2 || strong_edge_pixel); //【HX1P35A-移植适配】左上到右下方向的一像素断点连接。
+    wire diagonal_up_one_pixel_gap = weak_hyst_top_right && weak_hyst_bot_d2 &&
+                                     (strong_hyst_top_right || strong_hyst_bot_d2); //【HX1P35A-移植适配】右上到左下方向的一像素断点连接。
+    wire one_pixel_gap_edge = hyst_window_valid && !weak_hyst_mid_d1 &&
+                              (horizontal_one_pixel_gap || vertical_one_pixel_gap ||
+                               diagonal_down_one_pixel_gap || diagonal_up_one_pixel_gap); //【HX1P35A-移植适配】只填补夹在双阈值边缘之间的单像素空洞，不扩展孤立噪点。
+    wire edge_core = supported_strong_edge || symmetric_hyst_edge || one_pixel_gap_edge; //【HX1P35A-移植适配】统一输出完整 8 邻域判定结果：强边去孤点、弱边需强锚点、断点仅补一个像素。
     reg edge_core_q, edge_core_de_q; //【HX1P35A-移植适配】融合边缘增加一级寄存，切断梯度比较到 HDMI 输出的长组合路径。
-    reg [10:0] edge_x_q; //【HX1P35A-移植适配】保存融合边缘对应横坐标，驱动后级加粗行缓存。
-    reg edge_dilate_line [0:IMAGE_WIDTH-1]; //【HX1P35A-移植适配】保存上一行融合边缘，用于低成本 2x2 形态学膨胀。
+    reg [10:0] edge_x_q, edge_y_q; // 融合边缘对应的扫描坐标。
+    wire refined_edge, refined_de;
+    wire [10:0] refined_x;
+    generate if (ENABLE_EDGE_REFINEMENT) begin : g_edge_refinement
+        hx_edge_binary_refine #(.IMAGE_WIDTH(IMAGE_WIDTH)) u_refine (
+            .I_clk(I_clk), .I_rst_n(I_rst_n), .I_de(edge_core_de_q),
+            .I_x(edge_x_q), .I_y(edge_y_q), .I_edge(edge_core_q),
+            .O_de(refined_de), .O_x(refined_x), .O_edge(refined_edge)
+        );
+    end else begin : g_edge_refinement_bypass
+        assign refined_de = edge_core_de_q;
+        assign refined_x = edge_x_q;
+        assign refined_edge = edge_core_q;
+    end endgenerate
+    wire [0:0] dilate_line_rd;
     reg edge_dilate_left, edge_dilate_above_left; //【HX1P35A-移植适配】保存左邻和左上邻边缘，提升 HDMI 上的线条可见度。
-    wire edge_dilate_above = (edge_x_q < IMAGE_WIDTH) ? edge_dilate_line[edge_x_q] : 1'b0; //【HX1P35A-移植适配】读取上一行同列融合边缘。
-    wire edge_display_pixel = edge_core_q ||
-                              ((edge_x_q != 0) && edge_dilate_left) ||
+    wire edge_dilate_above = (refined_x < IMAGE_WIDTH) ? dilate_line_rd[0] : 1'b0;
+    wire edge_display_pixel = refined_edge ||
+                              ((refined_x != 0) && edge_dilate_left) ||
                               edge_dilate_above ||
-                              ((edge_x_q != 0) && edge_dilate_above_left); //【HX1P35A-移植适配】边缘向右、向下各扩展一像素，接近参考画面的粗亮轮廓。
-
-    //【GRAD 模式】梯度幅值灰阶显示：取 NMS 中心对齐的 Gaussian+Sobel 幅值，
-    // 只做移位缩放和饱和，不经过局部极大值抑制、双阈值和滞后连接，
-    // 因此输出连续灰阶（平坦区黑、弱边灰、强边白）而非二值细线。
-    wire [11:0] grad_scaled = mag_mid_d1 >> GRAD_SHIFT;
-    wire [7:0] grad_gray = (grad_scaled[11:8] != 4'd0) ? 8'd255 : grad_scaled[7:0];
+                              ((refined_x != 0) && edge_dilate_above_left);
 
     //【HX1P35A-移植适配】先用亮度与通道差筛选颜色候选，再用同色邻域一致性抑制暗光 Bayer/增益噪点。
     wire raw_red_hit = (I_rgb[23:16] >= 8'd96) && ({1'b0,I_rgb[23:16]} >= ({1'b0,I_rgb[15:8]} + 9'd40)) && ({1'b0,I_rgb[23:16]} >= ({1'b0,I_rgb[7:0]} + 9'd40)); //【HX1P35A-移植适配】红色候选需具备足够亮度和饱和度。
     wire raw_green_hit = (I_rgb[15:8] >= 8'd64) && ({1'b0,I_rgb[15:8]} >= ({1'b0,I_rgb[23:16]} + 9'd16)) && ({1'b0,I_rgb[15:8]} >= ({1'b0,I_rgb[7:0]} + 9'd16)); //【HX1P35A-移植适配】放宽绿色候选以识别偏暗、印刷和偏黄绿色包装；邻域一致性继续过滤孤立噪点。
     wire raw_blue_hit = (I_rgb[7:0] >= 8'd96) && ({1'b0,I_rgb[7:0]} >= ({1'b0,I_rgb[23:16]} + 9'd40)) && ({1'b0,I_rgb[7:0]} >= ({1'b0,I_rgb[15:8]} + 9'd40)); //【HX1P35A-移植适配】蓝色候选需具备足够亮度和饱和度。
     wire [1:0] raw_color = raw_red_hit ? 2'd1 : raw_green_hit ? 2'd2 : raw_blue_hit ? 2'd3 : 2'd0; //【HX1P35A-移植适配】将三色候选编码后共用一套行邻域滤波器。
-    reg [1:0] color_line [0:IMAGE_WIDTH-1]; //【HX1P35A-移植适配】保存上一行原始颜色候选，用于排除孤立色噪点。
+    assign raw_line_wr = {raw_line_rd[9:2], gray, raw_color}; //【资源优化】旧上一行推进为上两行，同时写入当前灰度与颜色。
     reg [1:0] color_left, color_above_left; //【HX1P35A-移植适配】保存当前行左邻及上一行左上邻的原始颜色。
-    wire [1:0] color_above = ((pix_y != 0) && (pix_x < IMAGE_WIDTH)) ? color_line[pix_x] : 2'd0; //【HX1P35A-移植适配】首行不引用上一帧残留行缓存。
+    wire [1:0] color_above = ((pix_y != 0) && (pix_x < IMAGE_WIDTH)) ? raw_line_rd[1:0] : 2'd0; //【HX1P35A-移植适配】首行不引用上一帧残留行缓存。
     wire color_match_left = (pix_x != 0) && (raw_color != 0) && (raw_color == color_left); //【HX1P35A-移植适配】当前颜色与左邻一致。
     wire color_match_above = (raw_color != 0) && (raw_color == color_above); //【HX1P35A-移植适配】当前颜色与上邻一致。
     wire color_match_above_left = (pix_x != 0) && (pix_y != 0) && (raw_color != 0) && (raw_color == color_above_left); //【HX1P35A-移植适配】当前颜色与左上邻一致。
@@ -233,8 +211,6 @@ module hx_vision_pipeline #(
     wire [23:0] dim_rgb = {1'b0,I_rgb[23:17],1'b0,I_rgb[15:9],1'b0,I_rgb[7:1]}; //【HX1P35A-移植适配】保留半亮原图作为 COLOR 背景。
     wire [23:0] color_overlay_rgb = target_hit ? target_mask_rgb : dim_rgb; //【HX1P35A-移植适配】目标高亮，未命中区域仍可观察。
 
-<<<<<<< Updated upstream
-=======
     //【资源优化】ERAM 在 I_clk 下降沿预读当前地址，上升沿沿用原流水处理并写回，避免增加整拍延迟。
     hx_eram_line_store #(.DATA_WIDTH(18)) u_raw_color_line_store (
         .clk(I_clk), .rd_addr(pix_x), .wr_addr(pix_x),
@@ -249,15 +225,14 @@ module hx_vision_pipeline #(
         .wr_en(refined_de && (refined_x < IMAGE_WIDTH)), .wr_data(refined_edge), .rd_data(dilate_line_rd)
     );
 
-    wire raw_sharpen_selected = ENABLE_RAW_SHARPEN && I_raw_sharpen_enable && (I_mode == 3'd0);
+    wire raw_sharpen_selected = ENABLE_RAW_SHARPEN && I_raw_sharpen_enable && (I_mode == 2'd0);
     wire [2:0] template_status;
     wire [3:0] template_reason;
     wire [14:0] template_best,template_margin;
     wire [4:0] template_misses;
     wire [10:0] template_cx,template_cy;
     generate if(ENABLE_TEMPLATE_TRACKING)begin : g_template
-        hx_template_tracker #(.IMAGE_WIDTH(IMAGE_WIDTH),.IMAGE_HEIGHT(IMAGE_HEIGHT),
-            .DISP_SMOOTH_SHIFT(TEMPLATE_DISP_SMOOTH_SHIFT),.DISP_DEADBAND(TEMPLATE_DISP_DEADBAND)) u_tracker (
+        hx_template_tracker #(.IMAGE_WIDTH(IMAGE_WIDTH),.IMAGE_HEIGHT(IMAGE_HEIGHT)) u_tracker (
             .clk(I_clk),.rst_n(I_rst_n),.command(I_template_command),
             .de(gaussian_de_q),.x(gaussian_x_q),.y(gaussian_y_q),.luma(gaussian_gray_q),
             .status(template_status),.center_x(template_cx),.center_y(template_cy),.busy(),
@@ -269,13 +244,17 @@ module hx_vision_pipeline #(
         assign template_reason=0;assign template_best=0;assign template_margin=0;assign template_misses=0;
     end endgenerate
 
->>>>>>> Stashed changes
     //【HX1P35A-移植适配】逐帧统计目标总面积、各颜色面积和外接矩形。
     reg [10:0] cur_xmin, cur_xmax, cur_ymin, cur_ymax;
     reg [10:0] box_xmin, box_xmax, box_ymin, box_ymax;
     reg [23:0] cur_count, cur_red_count, cur_green_count, cur_blue_count;
     reg [1:0] box_color; // 0:无，1:红，2:绿，3:蓝。【HX1P35A-移植适配】
-    wire cur_frame_valid = (cur_count >= MIN_TARGET_PIXELS);
+    localparam TARGET_MISS_BITS = (TARGET_HOLD_FRAMES < 1) ? 1 : $clog2(TARGET_HOLD_FRAMES + 1);
+    reg [TARGET_MISS_BITS-1:0] target_miss_count;
+    reg target_fresh; // Last completed frame supplied a usable measurement; false while holding/lost.
+    wire cur_frame_valid = (cur_count != 0) &&
+        (cur_count >= (O_target_found ? TARGET_RELEASE_PIXELS : MIN_TARGET_PIXELS));
+    wire target_holding = O_target_found && !target_fresh;
 
     //【HX1P35A-移植适配】连续检测时对包围框做 1/2 帧间平滑，减小边框抖动。
     wire [10:0] next_box_xmin = (cur_frame_valid && O_target_found) ? (({1'b0,box_xmin}+{1'b0,cur_xmin}) >> 1) : cur_xmin;
@@ -319,7 +298,33 @@ module hx_vision_pipeline #(
         end
     endfunction
 
+    function [19:0] bin16_to_bcd5;
+        input [15:0] bin;
+        integer i, j;
+        reg [19:0] bcd;
+        begin
+            bcd = 20'd0;
+            for (i=15; i>=0; i=i-1) begin
+                for (j=0; j<5; j=j+1)
+                    if (bcd[j*4 +: 4] >= 5) bcd[j*4 +: 4] = bcd[j*4 +: 4] + 3;
+                bcd = {bcd[18:0],bin[i]};
+            end
+            bin16_to_bcd5 = bcd;
+        end
+    endfunction
+
+    function [7:0] hex_ascii;
+        input [3:0] digit;
+        begin
+            hex_ascii = (digit < 10) ? ("0" + digit) : ("A" + digit - 10);
+        end
+    endfunction
+
     reg [15:0] center_x_bcd, center_y_bcd;
+    reg [19:0] applied_exposure_bcd;
+    reg [23:0] applied_gain_regs_q;
+    reg [1:0] applied_status_q;
+    reg applied_has_value_q, applied_toggle_seen;
     reg [23:0] pixel_count_bcd;
 
     //【HX1P35A-移植适配】5x7 字模，2 倍放大后在 HDMI 顶部显示模式、主颜色、坐标和面积。
@@ -344,7 +349,11 @@ module hx_vision_pipeline #(
                 "C": case(row) 0:font5x7=5'b01111;1:font5x7=5'b10000;2:font5x7=5'b10000;3:font5x7=5'b10000;4:font5x7=5'b10000;5:font5x7=5'b10000;6:font5x7=5'b01111;endcase
                 "D": case(row) 0:font5x7=5'b11110;1:font5x7=5'b10001;2:font5x7=5'b10001;3:font5x7=5'b10001;4:font5x7=5'b10001;5:font5x7=5'b10001;6:font5x7=5'b11110;endcase
                 "E": case(row) 0:font5x7=5'b11111;1:font5x7=5'b10000;2:font5x7=5'b10000;3:font5x7=5'b11110;4:font5x7=5'b10000;5:font5x7=5'b10000;6:font5x7=5'b11111;endcase
+                "F": case(row) 0:font5x7=5'b11111;1:font5x7=5'b10000;2:font5x7=5'b10000;3:font5x7=5'b11110;4:font5x7=5'b10000;5:font5x7=5'b10000;6:font5x7=5'b10000;endcase
                 "G": case(row) 0:font5x7=5'b01111;1:font5x7=5'b10000;2:font5x7=5'b10000;3:font5x7=5'b10111;4:font5x7=5'b10001;5:font5x7=5'b10001;6:font5x7=5'b01111;endcase
+                "H": case(row) 0:font5x7=5'b10001;1:font5x7=5'b10001;2:font5x7=5'b10001;3:font5x7=5'b11111;4:font5x7=5'b10001;5:font5x7=5'b10001;6:font5x7=5'b10001;endcase
+                "I": case(row) 0:font5x7=5'b01110;1:font5x7=5'b00100;2:font5x7=5'b00100;3:font5x7=5'b00100;4:font5x7=5'b00100;5:font5x7=5'b00100;6:font5x7=5'b01110;endcase
+                "K": case(row) 0:font5x7=5'b10001;1:font5x7=5'b10010;2:font5x7=5'b10100;3:font5x7=5'b11000;4:font5x7=5'b10100;5:font5x7=5'b10010;6:font5x7=5'b10001;endcase
                 "L": case(row) 0:font5x7=5'b10000;1:font5x7=5'b10000;2:font5x7=5'b10000;3:font5x7=5'b10000;4:font5x7=5'b10000;5:font5x7=5'b10000;6:font5x7=5'b11111;endcase
                 "M": case(row) 0:font5x7=5'b10001;1:font5x7=5'b11011;2:font5x7=5'b10101;3:font5x7=5'b10101;4:font5x7=5'b10001;5:font5x7=5'b10001;6:font5x7=5'b10001;endcase
                 "N": case(row) 0:font5x7=5'b10001;1:font5x7=5'b11001;2:font5x7=5'b11001;3:font5x7=5'b10101;4:font5x7=5'b10011;5:font5x7=5'b10011;6:font5x7=5'b10001;endcase //【HX1P35A-移植适配】CANNY 模式字模。
@@ -352,11 +361,15 @@ module hx_vision_pipeline #(
                 "P": case(row) 0:font5x7=5'b11110;1:font5x7=5'b10001;2:font5x7=5'b10001;3:font5x7=5'b11110;4:font5x7=5'b10000;5:font5x7=5'b10000;6:font5x7=5'b10000;endcase
                 "R": case(row) 0:font5x7=5'b11110;1:font5x7=5'b10001;2:font5x7=5'b10001;3:font5x7=5'b11110;4:font5x7=5'b10100;5:font5x7=5'b10010;6:font5x7=5'b10001;endcase
                 "S": case(row) 0:font5x7=5'b01111;1:font5x7=5'b10000;2:font5x7=5'b10000;3:font5x7=5'b01110;4:font5x7=5'b00001;5:font5x7=5'b00001;6:font5x7=5'b11110;endcase
+                "T": case(row) 0:font5x7=5'b11111;1:font5x7=5'b00100;2:font5x7=5'b00100;3:font5x7=5'b00100;4:font5x7=5'b00100;5:font5x7=5'b00100;6:font5x7=5'b00100;endcase
+                "U": case(row) 0:font5x7=5'b10001;1:font5x7=5'b10001;2:font5x7=5'b10001;3:font5x7=5'b10001;4:font5x7=5'b10001;5:font5x7=5'b10001;6:font5x7=5'b01110;endcase
                 "W": case(row) 0:font5x7=5'b10001;1:font5x7=5'b10001;2:font5x7=5'b10001;3:font5x7=5'b10101;4:font5x7=5'b10101;5:font5x7=5'b10101;6:font5x7=5'b01010;endcase
                 "X": case(row) 0:font5x7=5'b10001;1:font5x7=5'b10001;2:font5x7=5'b01010;3:font5x7=5'b00100;4:font5x7=5'b01010;5:font5x7=5'b10001;6:font5x7=5'b10001;endcase
                 "Y": case(row) 0:font5x7=5'b10001;1:font5x7=5'b10001;2:font5x7=5'b01010;3:font5x7=5'b00100;4:font5x7=5'b00100;5:font5x7=5'b00100;6:font5x7=5'b00100;endcase
                 ":": case(row) 2:font5x7=5'b00100;4:font5x7=5'b00100;default:font5x7=5'b00000;endcase
+                "/": case(row) 0:font5x7=5'b00001;1:font5x7=5'b00010;2:font5x7=5'b00100;3:font5x7=5'b01000;4:font5x7=5'b10000;default:font5x7=5'b00000;endcase
                 "-": case(row) 3:font5x7=5'b11111;default:font5x7=5'b00000;endcase
+                "V": case(row) 0:font5x7=5'b10001;1:font5x7=5'b10001;2:font5x7=5'b10001;3:font5x7=5'b10001;4:font5x7=5'b10001;5:font5x7=5'b01010;6:font5x7=5'b00100;endcase
                 default: font5x7=5'b00000;
             endcase
         end
@@ -367,26 +380,26 @@ module hx_vision_pipeline #(
         begin bcd_ascii = "0" + digit; end
     endfunction
 
-    //【HX1P35A-移植适配】将算法结果与叠加绘制拆成两级流水，保证 75MHz HDMI 像素时序。
+    // Three aligned stages: address/data prefetch, original ROM lookup, overlay.
+    // The untouched example's combinational ROM needs a full clock by itself.
+    reg prefetch_vsync, prefetch_hsync, prefetch_de, prefetch_user, prefetch_last;
+    reg [23:0] prefetch_rgb;
+    reg prefetch_lift;
+    reg [10:0] prefetch_x, prefetch_y;
     reg stage_vsync, stage_hsync, stage_de, stage_user, stage_last;
     reg [23:0] stage_rgb;
-<<<<<<< Updated upstream
-    reg [10:0] draw_x, draw_y;
-
-    wire box_border = (I_mode == 2'd2) && O_target_found && stage_de && //【HX1P35A-移植适配】目标框只在 COLOR 模式显示，避免干扰 Sobel 观察。
-=======
     reg [10:0] source_x, source_y;
-    reg [2:0] prefetch_mode, stage_mode;
+    reg [1:0] prefetch_mode, stage_mode;
     reg prefetch_sharp, stage_sharp;
     wire [10:0] draw_x, draw_y, logo_input_x, logo_input_y;
     wire [4:0] final_ctrl;
     wire [23:0] final_rgb;
-    wire [2:0] final_mode;
+    wire [1:0] final_mode;
     wire logo_input_de;
     generate if (ENABLE_RAW_SHARPEN) begin : g_centered_display
-        wire [55:0] delayed;
+        wire [54:0] delayed;
         wire signed [8:0] delta;
-        reg [55:0] d1, d2;
+        reg [54:0] d1, d2;
         reg [23:0] enhanced1, enhanced2;
         hx_centered_display #(.IMAGE_WIDTH(IMAGE_WIDTH),
             .NOISE_GATE(RAW_SHARPEN_NOISE_GATE), .MAX_DELTA(RAW_SHARPEN_MAX_DELTA),
@@ -409,7 +422,7 @@ module hx_vision_pipeline #(
             if(!I_rst_n) begin d1<=0; d2<=0; enhanced1<=0; enhanced2<=0; end
             else begin
                 d1<=delayed; d2<=d1;
-                enhanced1 <= delayed[54] ?
+                enhanced1 <= delayed[53] ?
                     {adjust(delayed[23:16],delta),adjust(delayed[15:8],delta),adjust(delayed[7:0],delta)} : delayed[23:0];
                 enhanced2<=enhanced1;
             end
@@ -418,7 +431,7 @@ module hx_vision_pipeline #(
         assign logo_input_y=delayed[34:24];
         assign logo_input_de=delayed[48];
         assign draw_x=d2[45:35]; assign draw_y=d2[34:24];
-        assign final_ctrl=d2[50:46]; assign final_mode=d2[53:51]; assign final_rgb=enhanced2;
+        assign final_ctrl=d2[50:46]; assign final_mode=d2[52:51]; assign final_rgb=enhanced2;
     end else begin : g_direct_display
         assign final_ctrl={stage_vsync,stage_hsync,stage_de,stage_user,stage_last};
         assign final_rgb=stage_rgb; assign final_mode=stage_mode;
@@ -458,47 +471,125 @@ module hx_vision_pipeline #(
         assign logo_active_q = 1'b0;
     end endgenerate
 
-    wire box_border = (final_mode == 3'd2) && O_target_found && final_ctrl[2] && // Display mode travels with its pixels.
->>>>>>> Stashed changes
+    wire box_border = (final_mode == 2'd2) && O_target_found && final_ctrl[2] && // Display mode travels with its pixels.
         ((((draw_x == box_xmin) || (draw_x == box_xmax)) && (draw_y >= box_ymin) && (draw_y <= box_ymax)) ||
          (((draw_y == box_ymin) || (draw_y == box_ymax)) && (draw_x >= box_xmin) && (draw_x <= box_xmax)));
 
     wire [6:0] osd_col = draw_x[10:4];
-    wire osd_line = draw_y[4];
+    wire [1:0] osd_row = draw_y[5:4];
     wire [2:0] glyph_x = draw_x[3:1];
     wire [2:0] glyph_y = draw_y[3:1];
     reg [7:0] osd_char;
     reg [23:0] osd_fg;
-    wire [4:0] glyph_bits = font5x7(osd_char,glyph_y);
-    wire osd_background = stage_de && (draw_x < 11'd432) && (draw_y < 11'd32);
+    wire applied_osd_region = (osd_row == 0) && (osd_col >= 30) && (osd_col <= 53);
+    reg [7:0] applied_osd_char;
+    reg [23:0] applied_osd_fg;
+    always @(*) begin
+        applied_osd_char = " ";
+        applied_osd_fg = applied_status_q == 2'd2 ? 24'h60ff60 :
+                         applied_status_q == 2'd3 ? 24'hff6060 :
+                         applied_status_q == 2'd1 ? 24'hffb040 : 24'hc0c0c0;
+        if (!applied_has_value_q) begin
+            if (applied_status_q == 2'd0) begin
+                case(osd_col)
+                    30:applied_osd_char="A";31:applied_osd_char="P";32:applied_osd_char=":";
+                    34:applied_osd_char="W";35:applied_osd_char="A";36:applied_osd_char="I";37:applied_osd_char="T";
+                    default:applied_osd_char=" ";
+                endcase
+            end else if (applied_status_q == 2'd1) begin
+                case(osd_col)
+                    30:applied_osd_char="I";31:applied_osd_char="2";32:applied_osd_char="C";33:applied_osd_char=":";
+                    35:applied_osd_char="W";36:applied_osd_char="R";37:applied_osd_char="I";38:applied_osd_char="T";39:applied_osd_char="E";
+                    default:applied_osd_char=" ";
+                endcase
+            end else begin
+                case(osd_col)
+                    30:applied_osd_char="I";31:applied_osd_char="2";32:applied_osd_char="C";33:applied_osd_char=":";
+                    35:applied_osd_char="E";36:applied_osd_char="R";37:applied_osd_char="R";
+                    39:applied_osd_char="N";40:applied_osd_char="O";42:applied_osd_char="D";43:applied_osd_char="A";44:applied_osd_char="T";45:applied_osd_char="A";
+                    default:applied_osd_char=" ";
+                endcase
+            end
+        end else begin
+            case(osd_col)
+                30:applied_osd_char="A";31:applied_osd_char="P";
+                33:applied_osd_char="E";34:applied_osd_char=":";
+                35:applied_osd_char=bcd_ascii(applied_exposure_bcd[19:16]);
+                36:applied_osd_char=bcd_ascii(applied_exposure_bcd[15:12]);
+                37:applied_osd_char=bcd_ascii(applied_exposure_bcd[11:8]);
+                38:applied_osd_char=bcd_ascii(applied_exposure_bcd[7:4]);
+                39:applied_osd_char=bcd_ascii(applied_exposure_bcd[3:0]);
+                40:applied_osd_char="A";41:applied_osd_char=":";
+                42:applied_osd_char=hex_ascii(applied_gain_regs_q[23:20]);
+                43:applied_osd_char=hex_ascii(applied_gain_regs_q[19:16]);
+                44:applied_osd_char="D";45:applied_osd_char=":";
+                46:applied_osd_char=hex_ascii(applied_gain_regs_q[15:12]);
+                47:applied_osd_char=hex_ascii(applied_gain_regs_q[11:8]);
+                48:applied_osd_char="/";
+                49:applied_osd_char=hex_ascii(applied_gain_regs_q[7:4]);
+                50:applied_osd_char=hex_ascii(applied_gain_regs_q[3:0]);
+                52:applied_osd_char=applied_status_q==2'd2 ? "O" : applied_status_q==2'd1 ? "W" : "E";
+                53:applied_osd_char=applied_status_q==2'd2 ? "K" : "R";
+                default:applied_osd_char=" ";
+            endcase
+        end
+    end
+    wire template_osd_region=ENABLE_TEMPLATE_TRACKING && osd_row==2 && osd_col<38 && draw_y<48;
+    reg [63:0] template_text;
+    reg [23:0] template_fg;
+    reg [7:0] template_char;
+    always @(*)begin
+        template_fg=24'h40e0ff;
+        case(template_status)
+            1:begin template_text="LEARN   ";template_fg=24'hffff00;end
+            2:begin template_text="TRACK   ";template_fg=24'h60ff60;end
+            3:begin template_text="HOLD    ";template_fg=24'hffb040;end
+            4:begin template_text="LOST    ";template_fg=24'hff6060;end
+            5:begin template_text="FLAT    ";template_fg=24'hff60ff;end
+            6:begin template_text="VERIFY  ";template_fg=24'hffff00;end
+            default:template_text="READY   ";
+        endcase
+        case(osd_col)
+            0:template_char="T";1:template_char="P";2:template_char="L";3:template_char=":";4:template_char=" ";
+            14:template_char="E";15:template_char=":";
+            16:template_char=hex_ascii({1'b0,template_best[14:12]});
+            17:template_char=hex_ascii(template_best[11:8]);
+            18:template_char=hex_ascii(template_best[7:4]);
+            19:template_char=hex_ascii(template_best[3:0]);
+            21:template_char="U";22:template_char=":";
+            23:template_char=hex_ascii({1'b0,template_margin[14:12]});
+            24:template_char=hex_ascii(template_margin[11:8]);
+            25:template_char=hex_ascii(template_margin[7:4]);
+            26:template_char=hex_ascii(template_margin[3:0]);
+            28:template_char="R";29:template_char=":";30:template_char=hex_ascii(template_reason);
+            32:template_char="M";33:template_char=":";
+            34:template_char=hex_ascii({3'b000,template_misses[4]});
+            35:template_char=hex_ascii(template_misses[3:0]);
+            default:template_char=(osd_col>=5 && osd_col<13) ? (template_text >> ((12-osd_col)*8)) : " ";
+        endcase
+    end
+    wire [4:0] glyph_bits = font5x7(template_osd_region ? template_char : applied_osd_region ? applied_osd_char : osd_char,glyph_y);
+    // Existing status overlay stays at the upper left; applied I2C values use a disjoint upper-right strip.
+    wire osd_background = ENABLE_STATUS_OSD && final_ctrl[2] &&
+        ((draw_x < 11'd432 && draw_y < 11'd32) || template_osd_region || (applied_osd_region && draw_x < 11'd864 && draw_y < 11'd16));
     wire osd_glyph = osd_background && (glyph_x < 3'd5) && (glyph_y < 3'd7) && glyph_bits[4-glyph_x];
-<<<<<<< Updated upstream
-=======
     wire [23:0] osd_pixel_fg = template_osd_region ? template_fg : applied_osd_region ? applied_osd_fg : osd_fg;
-    wire template_border=ENABLE_TEMPLATE_TRACKING && (final_mode <= 3'd1) && final_ctrl[2] &&
+    wire template_border=ENABLE_TEMPLATE_TRACKING && !final_mode[1] && final_ctrl[2] &&
         ((((draw_x==template_cx-32)||(draw_x==template_cx+31)) && draw_y>=template_cy-32 && draw_y<template_cy+32) ||
          (((draw_y==template_cy-32)||(draw_y==template_cy+31)) && draw_x>=template_cx-32 && draw_x<template_cx+32));
->>>>>>> Stashed changes
 
-    //【HX1P35A-移植适配】第一行显示算法模式和 EXP:0~3 曝光档；第二行显示主颜色、目标中心坐标和像素面积。
+    // Row 0: mode and manual preset; row 1: color tracking; row 2: last I2C-confirmed sensor values.
     always @(*) begin
         osd_char = " ";
         osd_fg = 24'hffffff;
-        if (!osd_line) begin
+        if (osd_row == 0) begin
             osd_fg = 24'h40e0ff;
             case (osd_col)
                 0:osd_char="M"; 1:osd_char="O"; 2:osd_char="D"; 3:osd_char="E"; 4:osd_char=":";
-                14:osd_char="E"; 15:osd_char="X"; 16:osd_char="P"; 17:osd_char=":"; 18:osd_char=I_auto_exposure ? "A" : bcd_ascii({2'b00,I_exposure_level}); //【HX1P35A-移植适配】自动曝光显示 EXP:A。
+                14:osd_char="E"; 15:osd_char="X"; 16:osd_char="P"; 17:osd_char=":"; 18:osd_char=I_auto_exposure ? "A" : bcd_ascii({2'b00,I_exposure_level});
                 default: begin
-<<<<<<< Updated upstream
-                    case (I_mode)
-                        2'd0: case(osd_col) 6:osd_char="R";7:osd_char="A";8:osd_char="W";default:osd_char=" ";endcase
-                        2'd1: case(osd_col) 6:osd_char="G";7:osd_char="R";8:osd_char="A";9:osd_char="Y";default:osd_char=" ";endcase
-                        2'd2: case(osd_col) 6:osd_char="C";7:osd_char="O";8:osd_char="L";9:osd_char="O";10:osd_char="R";default:osd_char=" ";endcase
-                        default: case(osd_col) 6:osd_char="C";7:osd_char="A";8:osd_char="N";9:osd_char="N";10:osd_char="Y";default:osd_char=" ";endcase //【HX1P35A-移植适配】全屏边缘模式升级为轻量 Canny。
-=======
                     case (final_mode)
-                        3'd0: case(osd_col)
+                        2'd0: case(osd_col)
                             6:osd_char="R";7:osd_char="A";8:osd_char="W";
                             9:osd_char=I_raw_sharpen_enable && ENABLE_RAW_SHARPEN ? "S" : " ";
                             10:osd_char=I_raw_sharpen_enable && ENABLE_RAW_SHARPEN ? "H" : " ";
@@ -507,16 +598,26 @@ module hx_vision_pipeline #(
                             13:osd_char=I_raw_sharpen_enable && ENABLE_RAW_SHARPEN ? "P" : " ";
                             default:osd_char=" ";
                         endcase
-                        3'd1: case(osd_col) 6:osd_char="G";7:osd_char="R";8:osd_char="A";9:osd_char="Y";default:osd_char=" ";endcase
-                        3'd2: case(osd_col) 6:osd_char="C";7:osd_char="O";8:osd_char="L";9:osd_char="O";10:osd_char="R";default:osd_char=" ";endcase
-                        3'd3: case(osd_col) 6:osd_char="C";7:osd_char="A";8:osd_char="N";9:osd_char="N";10:osd_char="Y";default:osd_char=" ";endcase
-                        default: case(osd_col) 6:osd_char="G";7:osd_char="R";8:osd_char="A";9:osd_char="D";default:osd_char=" ";endcase //【GRAD】梯度幅值灰阶模式。
->>>>>>> Stashed changes
+                        2'd1: case(osd_col) 6:osd_char="G";7:osd_char="R";8:osd_char="A";9:osd_char="Y";default:osd_char=" ";endcase
+                        2'd2: case(osd_col) 6:osd_char="C";7:osd_char="O";8:osd_char="L";9:osd_char="O";10:osd_char="R";default:osd_char=" ";endcase
+                        default: case(osd_col) 6:osd_char="C";7:osd_char="A";8:osd_char="N";9:osd_char="N";10:osd_char="Y";default:osd_char=" ";endcase
                     endcase
                 end
             endcase
-        end else begin
-            osd_fg = O_target_found ? 24'h60ff60 : 24'hff6060;
+            // TRACK=current measurement; HOLD=last valid C/X/Y, not a new detection.
+            if (osd_col >= 22) begin
+                osd_fg = !O_target_found ? 24'hff6060 : target_holding ? 24'hffb040 : 24'h60ff60;
+                case (osd_col)
+                    22:osd_char=!O_target_found ? "L" : target_holding ? "H" : "T";
+                    23:osd_char=!O_target_found ? "O" : target_holding ? "O" : "R";
+                    24:osd_char=!O_target_found ? "S" : target_holding ? "L" : "A";
+                    25:osd_char=!O_target_found ? "T" : target_holding ? "D" : "C";
+                    26:osd_char=(!O_target_found || target_holding) ? " " : "K";
+                    default:osd_char=" ";
+                endcase
+            end
+        end else if (osd_row == 1) begin
+            osd_fg = !O_target_found ? 24'hff6060 : target_holding ? 24'hffb040 : 24'h60ff60;
             case (osd_col)
                 0:osd_char="C"; 1:osd_char=":";
                 2:osd_char=!O_target_found ? "-" : (box_color==2'd1 ? "R" : box_color==2'd2 ? "G" : "B");
@@ -531,28 +632,75 @@ module hx_vision_pipeline #(
                 15:osd_char=O_target_found ? bcd_ascii(center_y_bcd[7:4])   : "-";
                 16:osd_char=O_target_found ? bcd_ascii(center_y_bcd[3:0])   : "-";
                 18:osd_char="P"; 19:osd_char=":";
-                20:osd_char=O_target_found ? bcd_ascii(pixel_count_bcd[23:20]) : "-";
-                21:osd_char=O_target_found ? bcd_ascii(pixel_count_bcd[19:16]) : "-";
-                22:osd_char=O_target_found ? bcd_ascii(pixel_count_bcd[15:12]) : "-";
-                23:osd_char=O_target_found ? bcd_ascii(pixel_count_bcd[11:8])  : "-";
-                24:osd_char=O_target_found ? bcd_ascii(pixel_count_bcd[7:4])   : "-";
-                25:osd_char=O_target_found ? bcd_ascii(pixel_count_bcd[3:0])   : "-";
+                20:osd_char=bcd_ascii(pixel_count_bcd[23:20]);
+                21:osd_char=bcd_ascii(pixel_count_bcd[19:16]);
+                22:osd_char=bcd_ascii(pixel_count_bcd[15:12]);
+                23:osd_char=bcd_ascii(pixel_count_bcd[11:8]);
+                24:osd_char=bcd_ascii(pixel_count_bcd[7:4]);
+                25:osd_char=bcd_ascii(pixel_count_bcd[3:0]);
                 default:osd_char=" ";
             endcase
+        end else if (osd_row == 2) begin
+            osd_fg = applied_status_q == 2'd2 ? 24'h60ff60 :
+                     applied_status_q == 2'd3 ? 24'hff6060 :
+                     applied_status_q == 2'd1 ? 24'hffb040 : 24'hc0c0c0;
+            if (!applied_has_value_q) begin
+                if (applied_status_q == 2'd0) begin
+                    case(osd_col)
+                        0:osd_char="A";1:osd_char="P";2:osd_char=":";
+                        4:osd_char="W";5:osd_char="A";6:osd_char="I";7:osd_char="T";
+                        default:osd_char=" ";
+                    endcase
+                end else if (applied_status_q == 2'd1) begin
+                    case(osd_col)
+                        0:osd_char="I";1:osd_char="2";2:osd_char="C";3:osd_char=":";
+                        5:osd_char="W";6:osd_char="R";7:osd_char="I";8:osd_char="T";9:osd_char="E";
+                        default:osd_char=" ";
+                    endcase
+                end else begin
+                    case(osd_col)
+                        0:osd_char="I";1:osd_char="2";2:osd_char="C";3:osd_char=":";
+                        5:osd_char="E";6:osd_char="R";7:osd_char="R";
+                        9:osd_char="N";10:osd_char="O";12:osd_char="D";13:osd_char="A";14:osd_char="T";15:osd_char="A";
+                        default:osd_char=" ";
+                    endcase
+                end
+            end else begin
+                case(osd_col)
+                    0:osd_char="A";1:osd_char="P";
+                    3:osd_char="E";4:osd_char=":";
+                    5:osd_char=bcd_ascii(applied_exposure_bcd[19:16]);
+                    6:osd_char=bcd_ascii(applied_exposure_bcd[15:12]);
+                    7:osd_char=bcd_ascii(applied_exposure_bcd[11:8]);
+                    8:osd_char=bcd_ascii(applied_exposure_bcd[7:4]);
+                    9:osd_char=bcd_ascii(applied_exposure_bcd[3:0]);
+                    11:osd_char="A";12:osd_char=":";
+                    13:osd_char=hex_ascii(applied_gain_regs_q[23:20]);
+                    14:osd_char=hex_ascii(applied_gain_regs_q[19:16]);
+                    16:osd_char="D";17:osd_char=":";
+                    18:osd_char=hex_ascii(applied_gain_regs_q[15:12]);
+                    19:osd_char=hex_ascii(applied_gain_regs_q[11:8]);
+                    20:osd_char="/";
+                    21:osd_char=hex_ascii(applied_gain_regs_q[7:4]);
+                    22:osd_char=hex_ascii(applied_gain_regs_q[3:0]);
+                    24:osd_char=applied_status_q==2'd2 ? "O" : applied_status_q==2'd1 ? "W" : "E";
+                    25:osd_char=applied_status_q==2'd2 ? "K" : applied_status_q==2'd1 ? "R" : "R";
+                    26:osd_char=applied_status_q==2'd3 ? "R" : " ";
+                    default:osd_char=" ";
+                endcase
+            end
         end
     end
 
     reg [23:0] base_rgb;
-<<<<<<< Updated upstream
-=======
     // Do not feed the Canny/overlay mux into the denoiser's half-cycle path.
     // Other modes bypass filtering downstream; history only needs RAW/GRAY.
     wire [23:0] display_source = I_mode[0] ? {gray,gray,gray} : I_rgb;
     // Display-only, causal 2x2 filter: no line/coordinate displacement.
     // Reject the entire window if any channel differs by more than 24.
     // Thus equal-luma chromatic edges are protected as well as luma edges.
-    wire [26:0] display_above;
-    reg [26:0] display_left, display_above_left;
+    wire [25:0] display_above;
+    reg [25:0] display_left, display_above_left;
     reg [29:0] display_sum_q;
     reg display_flat_q;
     function near_rgb;
@@ -578,13 +726,13 @@ module hx_vision_pipeline #(
     wire [23:0] display_filtered = display_flat_q ?
         {display_sum_q[29:22],display_sum_q[19:12],display_sum_q[9:2]} : prefetch_rgb;
     generate if (ENABLE_DISPLAY_DENOISE) begin : g_display_denoise
-        hx_eram_line_store #(.DATA_WIDTH(27)) u_display_row (
+        hx_eram_line_store #(.DATA_WIDTH(26)) u_display_row (
             .clk(I_clk), .rd_addr(pix_x), .wr_addr(pix_x),
             .wr_en(I_rst_n && I_de && (pix_x < IMAGE_WIDTH)),
             .wr_data({I_mode,display_source}), .rd_data(display_above)
         );
     end else begin : g_no_display_denoise
-        assign display_above = 27'd0;
+        assign display_above = 26'd0;
     end endgenerate
     always @(posedge I_clk or negedge I_rst_n) begin
         if (!I_rst_n) begin
@@ -593,8 +741,8 @@ module hx_vision_pipeline #(
         end else begin
             display_flat_q <= ENABLE_DISPLAY_DENOISE && I_de && !I_mode[1] &&
                 (pix_x > 0) && (pix_y > 0) &&
-                (display_left[26:24] == I_mode) && (display_above[26:24] == I_mode) &&
-                (display_above_left[26:24] == I_mode) &&
+                (display_left[25:24] == I_mode) && (display_above[25:24] == I_mode) &&
+                (display_above_left[25:24] == I_mode) &&
                 near_rgb(display_source,display_left[23:0]) &&
                 near_rgb(display_source,display_above[23:0]) &&
                 near_rgb(display_source,display_above_left[23:0]);
@@ -608,24 +756,32 @@ module hx_vision_pipeline #(
             end
         end
     end
->>>>>>> Stashed changes
     reg [23:0] overlay_rgb;
-    //【HX1P35A-移植适配】000 原图、001 灰度、010 彩色目标掩膜、011 全屏轻量 Canny 边缘、100 梯度幅值灰阶。
+    //【HX1P35A-移植适配】00 原图、01 灰度、10 彩色目标掩膜、11 全屏轻量 Canny 边缘。
     always @(*) begin
         case(I_mode)
-            3'd1: base_rgb = {gray,gray,gray};
-            3'd2: base_rgb = color_overlay_rgb; //【HX1P35A-移植适配】COLOR 不再因未命中目标而整屏全黑。
-            3'd3: base_rgb = edge_display_pixel ? 24'hffffff : 24'h000000; //【HX1P35A-移植适配】Canny 输出使用强细节补偿和 2x2 加粗后的边缘。
-            3'd4: base_rgb = {grad_gray,grad_gray,grad_gray}; //【GRAD】Gaussian+Sobel 幅值灰阶，不做 NMS 与二值化。
+            2'd1: base_rgb = {gray,gray,gray};
+            2'd2: base_rgb = color_overlay_rgb; //【HX1P35A-移植适配】COLOR 不再因未命中目标而整屏全黑。
+            2'd3: base_rgb = edge_display_pixel ? 24'hffffff : 24'h000000; //【HX1P35A-移植适配】Canny 输出使用强细节补偿和 2x2 加粗后的边缘。
             default: base_rgb = I_rgb;
         endcase
     end
 
     always @(*) begin
-        overlay_rgb = stage_rgb;
-        if (osd_glyph) overlay_rgb = osd_fg;
+        overlay_rgb = final_rgb;
+        if (osd_glyph) overlay_rgb = osd_pixel_fg;
         else if (osd_background) overlay_rgb = 24'h101018;
-        else if (box_border) overlay_rgb = 24'hffff00;
+        else if (template_border) overlay_rgb = template_fg;
+        else if (box_border) overlay_rgb = target_holding ? 24'hffb040 : 24'hffff00;
+        if (final_ctrl[2] && logo_active_q && logo_pixel_q[24]) overlay_rgb = logo_pixel_q[23:0];
+        // Small top-right strip: gray=unlearned, blue=capturing, green=applied, red=invalid white field.
+        if(ENABLE_CAL_STATUS && draw_y<6 && draw_x>=IMAGE_WIDTH-64)
+            case(I_cal_status)
+                1:overlay_rgb=24'h4080ff;
+                2:overlay_rgb=24'h20e060;
+                3:overlay_rgb=24'hff3030;
+                default:overlay_rgb=24'h808080;
+            endcase
     end
 
     always @(posedge I_clk or negedge I_rst_n) begin
@@ -633,41 +789,70 @@ module hx_vision_pipeline #(
             x <= 0; y <= 0;
             raw_top_d2 <= 0; raw_top_d1 <= 0; raw_mid_d2 <= 0; raw_mid_d1 <= 0; raw_bot_d2 <= 0; raw_bot_d1 <= 0; //【HX1P35A-移植适配】复位 Gaussian 滑动窗口。
             gaussian_gray_q <= 0; gaussian_x_q <= 0; gaussian_y_q <= 0; gaussian_de_q <= 0; //【HX1P35A-移植适配】复位 Gaussian 流水寄存器及坐标。
+            gaussian_gray_d <= 0; gaussian_x_d <= 0; gaussian_y_d <= 0; gaussian_de_d <= 0; edge_line_rd_q <= 0; //【资源优化】复位 ERAM 读数据对齐级。
             top_d2 <= 0; top_d1 <= 0; mid_d2 <= 0; mid_d1 <= 0; bot_d2 <= 0; bot_d1 <= 0;
             mag_top_d2 <= 0; mag_top_d1 <= 0; mag_mid_d2 <= 0; mag_mid_d1 <= 0; mag_bot_d2 <= 0; mag_bot_d1 <= 0; //【HX1P35A-移植适配】复位 Sobel 幅值细化窗口。
             dir_mid_d2 <= 0; dir_mid_d1 <= 0; //【HX1P35A-移植适配】复位局部极大值方向窗口。
-            weak_left <= 0; weak_above_left <= 0; //【HX1P35A-移植适配】复位连续弱纹理状态。
-            strong_left <= 0; strong_above_left <= 0; //【HX1P35A-移植适配】复位 Sobel 双阈值连接状态。
-            bridge_left <= 0; bridge_above_left <= 0; //【HX1P35A-移植适配】复位单像素断点连接状态。
             weak_hyst_top_d2 <= 0; weak_hyst_top_d1 <= 0; weak_hyst_mid_d2 <= 0; weak_hyst_mid_d1 <= 0; weak_hyst_bot_d2 <= 0; weak_hyst_bot_d1 <= 0;
             strong_hyst_top_d2 <= 0; strong_hyst_top_d1 <= 0; strong_hyst_mid_d2 <= 0; strong_hyst_mid_d1 <= 0; strong_hyst_bot_d2 <= 0; strong_hyst_bot_d1 <= 0; //【HX1P35A-移植适配】复位对称 8 邻域滞后窗口。
-            edge_core_q <= 0; edge_core_de_q <= 0; edge_x_q <= 0; //【HX1P35A-移植适配】复位强细节补偿流水级。
+            edge_core_q <= 0; edge_core_de_q <= 0; edge_x_q <= 0; edge_y_q <= 0;
             edge_dilate_left <= 0; edge_dilate_above_left <= 0; //【HX1P35A-移植适配】复位边缘加粗邻域状态。
             color_left <= 0; color_above_left <= 0; //【HX1P35A-移植适配】复位颜色邻域一致性状态。
             cur_count <= 0; cur_red_count <= 0; cur_green_count <= 0; cur_blue_count <= 0;
             cur_xmin <= 11'd2047; cur_ymin <= 11'd2047; cur_xmax <= 0; cur_ymax <= 0;
             box_xmin <= 0; box_ymin <= 0; box_xmax <= 0; box_ymax <= 0; box_color <= 0;
             center_x_bcd <= 0; center_y_bcd <= 0; pixel_count_bcd <= 0;
+            applied_exposure_bcd <= 0; applied_gain_regs_q <= 0; applied_status_q <= 0;
+            applied_has_value_q <= 0; applied_toggle_seen <= 0;
             O_target_found <= 0; O_target_pixels <= 0;
+            target_fresh <= 0; target_miss_count <= 0;
             frame_luma_sum <= 0; frame_highlight_count <= 0; frame_shadow_count <= 0; O_frame_luma <= 0; O_frame_highlights <= 0; O_frame_shadows <= 0; O_frame_luma_toggle <= 0; //【HX1P35A-移植适配】复位自动曝光亮度、高光及暗部统计。
+            prefetch_vsync <= 0; prefetch_hsync <= 0; prefetch_de <= 0; prefetch_user <= 0; prefetch_last <= 0;
+            prefetch_rgb <= 0; prefetch_x <= 0; prefetch_y <= 0;
+            prefetch_lift <= 0;
             stage_vsync <= 0; stage_hsync <= 0; stage_de <= 0; stage_user <= 0; stage_last <= 0;
-            stage_rgb <= 0; draw_x <= 0; draw_y <= 0;
+            stage_rgb <= 0; source_x <= 0; source_y <= 0;
+            prefetch_mode<=0; stage_mode<=0; prefetch_sharp<=0; stage_sharp<=0;
             O_vsync <= 0; O_hsync <= 0; O_de <= 0; O_user <= 0; O_last <= 0; O_rgb <= 0;
         end else begin
-            //【HX1P35A-移植适配】第一级锁存算法画面和坐标，第二级锁存 OSD/包围框画面；标志同步延迟。
-            stage_vsync <= I_vsync; stage_hsync <= I_hsync; stage_de <= I_de;
-            stage_user <= I_user; stage_last <= I_last;
-            stage_rgb <= I_de ? base_rgb : 24'h000000;
-            draw_x <= pix_x; draw_y <= pix_y;
-            O_vsync <= stage_vsync; O_hsync <= stage_hsync; O_de <= stage_de;
-            O_user <= stage_user; O_last <= stage_last;
-            O_rgb <= stage_de ? overlay_rgb : 24'h000000;
+            // All modes, coordinates and five video flags share the ROM's
+            // address/lookup/overlay latency; DDR read timing is unchanged.
+            prefetch_vsync <= I_vsync; prefetch_hsync <= I_hsync; prefetch_de <= I_de;
+            prefetch_user <= I_user; prefetch_last <= I_last;
+            prefetch_rgb <= I_de ? base_rgb : 24'h000000;
+            prefetch_mode<=I_mode; stage_mode<=prefetch_mode;
+            prefetch_sharp<=raw_sharpen_selected; stage_sharp<=prefetch_sharp;
+            prefetch_lift <= ENABLE_SHADOW_LIFT && !I_mode[1];
+            prefetch_x <= pix_x; prefetch_y <= pix_y;
+            stage_vsync <= prefetch_vsync; stage_hsync <= prefetch_hsync; stage_de <= prefetch_de;
+            stage_user <= prefetch_user; stage_last <= prefetch_last;
+            stage_rgb <= prefetch_lift ? {lift_shadow(display_filtered[23:16]),
+                lift_shadow(display_filtered[15:8]),lift_shadow(display_filtered[7:0])} : display_filtered;
+            source_x <= prefetch_x; source_y <= prefetch_y;
+            {O_vsync,O_hsync,O_de,O_user,O_last} <= final_ctrl;
+            O_rgb <= final_ctrl[2] ? overlay_rgb : 24'h000000;
+
+            if (I_applied_update_toggle != applied_toggle_seen) begin
+                applied_exposure_bcd <= bin16_to_bcd5(I_applied_exposure);
+                applied_gain_regs_q <= I_applied_gain_regs;
+                applied_status_q <= I_applied_status;
+                applied_has_value_q <= I_applied_has_value;
+                applied_toggle_seen <= I_applied_update_toggle;
+            end
 
             gaussian_de_q <= I_de; //【HX1P35A-移植适配】Gaussian 输出有效标志延迟一级以切断长组合路径。
-            edge_core_de_q <= gaussian_de_q; //【HX1P35A-移植适配】边缘融合有效信号随结果再延迟一级。
+            gaussian_de_d <= gaussian_de_q;
+            edge_line_rd_q <= edge_line_rd;
             if (gaussian_de_q) begin
+                gaussian_gray_d <= gaussian_gray_q;
+                gaussian_x_d <= gaussian_x_q;
+                gaussian_y_d <= gaussian_y_q;
+            end
+            edge_core_de_q <= gaussian_de_d; //【资源优化】边缘融合结果与新增 ERAM 对齐级同步。
+            if (gaussian_de_d) begin
                 edge_core_q <= edge_core; //【HX1P35A-移植适配】寄存融合边缘，保证 HDMI 像素时序。
-                edge_x_q <= gaussian_x_q; //【HX1P35A-移植适配】坐标与寄存后的融合边缘保持同拍。
+                edge_x_q <= gaussian_x_d; //【资源优化】坐标与 ERAM 对齐后的融合边缘保持同拍。
+                edge_y_q <= gaussian_y_d;
             end
             if (I_de) begin
                 gaussian_gray_q <= gaussian_gray; //【HX1P35A-移植适配】寄存平滑结果后再进入 Sobel。
@@ -680,7 +865,7 @@ module hx_vision_pipeline #(
                 O_frame_shadows <= frame_shadow_count; //【HX1P35A-移植适配】锁存上一帧深暗面积用于保护暗部结构。
                 O_frame_luma_toggle <= ~O_frame_luma_toggle; //【HX1P35A-移植适配】跨域接收端据此识别新一帧统计值。
                 frame_luma_sum <= {12'd0,gray}; //【HX1P35A-移植适配】当前 (0,0) 像素作为新一帧第一个样点。
-                frame_highlight_count <= highlight_pixel ? 12'd1 : 12'd0; //【HX1P35A-移植适配】从新帧首像素重新统计真正接近削顶的高光。
+                frame_highlight_count <= (gray >= 8'd245) ? 12'd1 : 12'd0; //【HX1P35A-移植适配】从新帧首像素重新统计真正接近削顶的高光。
                 frame_shadow_count <= (gray <= 8'd48) ? 12'd1 : 12'd0; //【HX1P35A-移植适配】从新帧首像素重新统计深暗区域。
             end else if (luma_sample) begin
                 frame_luma_sum <= frame_luma_sum + gray; //【HX1P35A-移植适配】全画面稀疏亮度累加。
@@ -689,9 +874,6 @@ module hx_vision_pipeline #(
             end
 
             if (I_de && (pix_x < IMAGE_WIDTH)) begin
-                raw_gray_line2[pix_x] <= raw_gray_line1[pix_x]; //【HX1P35A-移植适配】推进 Gaussian 原始灰度行缓存。
-                raw_gray_line1[pix_x] <= gray; //【HX1P35A-移植适配】保存当前原始灰度供下一行平滑。
-                color_line[pix_x] <= raw_color; //【HX1P35A-移植适配】写入本行原始颜色候选，供下一行空间一致性判断。
                 color_left <= raw_color; //【HX1P35A-移植适配】保存当前候选供下一像素水平邻域判断。
                 color_above_left <= (pix_x == 0) ? 2'd0 : color_above; //【HX1P35A-移植适配】保存尚未被覆盖的上一行左上颜色。
                 if (pix_x == 0) begin
@@ -705,29 +887,11 @@ module hx_vision_pipeline #(
                 end
             end
 
-            if (gaussian_de_q && (gaussian_x_q < IMAGE_WIDTH)) begin //【HX1P35A-移植适配】Gaussian 后半段使用独立流水坐标推进。
-                weak_line[gaussian_x_q] <= weak_edge_pixel; //【HX1P35A-移植适配】保存当前弱边缘供下一行连续性判断。
-                weak_left <= weak_edge_pixel; //【HX1P35A-移植适配】保存当前弱边缘供下一像素水平连续性判断。
-                weak_above_left <= (gaussian_x_q == 0) ? 1'b0 : weak_above; //【HX1P35A-移植适配】保存尚未覆盖的上一行左上弱边缘。
-                strong_line[gaussian_x_q] <= strong_edge_pixel; //【HX1P35A-移植适配】写入本行强边缘，供下一行滞后连接判断。
-                strong_left <= strong_edge_pixel; //【HX1P35A-移植适配】保存当前强边缘供下一像素水平连接判断。
-                strong_above_left <= (gaussian_x_q == 0) ? 1'b0 : strong_above; //【HX1P35A-移植适配】保存左上强边缘，支持斜向轮廓。
-                bridge_line[gaussian_x_q] <= edge_seed; //【HX1P35A-移植适配】仅存第一步种子，限制断点连接深度。
-                bridge_left <= edge_seed; //【HX1P35A-移植适配】保存当前种子供下一像素连接。
-                bridge_above_left <= (gaussian_x_q == 0) ? 1'b0 : bridge_above; //【HX1P35A-移植适配】保存左上种子以补斜向短断点。
-                weak_hyst_line2[gaussian_x_q] <= weak_hyst_line1[gaussian_x_q];
-                weak_hyst_line1[gaussian_x_q] <= weak_edge_pixel;
-                strong_hyst_line2[gaussian_x_q] <= strong_hyst_line1[gaussian_x_q];
-                strong_hyst_line1[gaussian_x_q] <= strong_edge_pixel; //【HX1P35A-移植适配】保存双阈值候选，供下一行组成完整 3x3 滞后窗口。
-                mag_line2[gaussian_x_q] <= mag_line1[gaussian_x_q]; //【HX1P35A-移植适配】Sobel 幅值行缓存向上两行推进。
-                mag_line1[gaussian_x_q] <= sobel_mag; //【HX1P35A-移植适配】保存当前 Sobel 幅值供下一行细化。
-                dir_line1[gaussian_x_q] <= sobel_direction; //【HX1P35A-移植适配】保存当前四方向编码供下一行峰值比较。
-                gray_line2[gaussian_x_q] <= gray_line1[gaussian_x_q]; //【HX1P35A-移植适配】推进 Gaussian 平滑结果行缓存。
-                gray_line1[gaussian_x_q] <= gaussian_gray_q; //【HX1P35A-移植适配】写入寄存后的 Gaussian 灰度。
-                if (gaussian_x_q == 0) begin
+            if (gaussian_de_d && (gaussian_x_d < IMAGE_WIDTH)) begin //【资源优化】使用与锁存 ERAM 读数据对齐的坐标推进。
+                if (gaussian_x_d == 0) begin
                     top_d2 <= 0; top_d1 <= top_right; //【HX1P35A-移植适配】新行重新装载 Sobel 上行。
                     mid_d2 <= 0; mid_d1 <= mid_right; //【HX1P35A-移植适配】新行重新装载 Sobel 中行。
-                    bot_d2 <= 0; bot_d1 <= gaussian_gray_q; //【HX1P35A-移植适配】Sobel 新行装载寄存后的平滑像素。
+                    bot_d2 <= 0; bot_d1 <= gaussian_gray_d; //【HX1P35A-移植适配】Sobel 新行装载寄存后的平滑像素。
                     mag_top_d2 <= 0; mag_top_d1 <= mag_top_right; //【HX1P35A-移植适配】新行重新装载幅值窗口上行。
                     mag_mid_d2 <= 0; mag_mid_d1 <= mag_mid_right; //【HX1P35A-移植适配】新行重新装载幅值窗口中行。
                     mag_bot_d2 <= 0; mag_bot_d1 <= sobel_mag; //【HX1P35A-移植适配】新行重新装载幅值窗口下行。
@@ -741,7 +905,7 @@ module hx_vision_pipeline #(
                 end else begin
                     top_d2 <= top_d1; top_d1 <= top_right;
                     mid_d2 <= mid_d1; mid_d1 <= mid_right;
-                    bot_d2 <= bot_d1; bot_d1 <= gaussian_gray_q; //【HX1P35A-移植适配】Sobel 当前行窗口输入寄存后的平滑灰度。
+                    bot_d2 <= bot_d1; bot_d1 <= gaussian_gray_d; //【HX1P35A-移植适配】Sobel 当前行窗口输入寄存后的平滑灰度。
                     mag_top_d2 <= mag_top_d1; mag_top_d1 <= mag_top_right; //【HX1P35A-移植适配】幅值窗口上行水平滑动。
                     mag_mid_d2 <= mag_mid_d1; mag_mid_d1 <= mag_mid_right; //【HX1P35A-移植适配】幅值窗口中行水平滑动。
                     mag_bot_d2 <= mag_bot_d1; mag_bot_d1 <= sobel_mag; //【HX1P35A-移植适配】幅值窗口下行水平滑动。
@@ -755,28 +919,36 @@ module hx_vision_pipeline #(
                 end
             end
 
-            if (edge_core_de_q && (edge_x_q < IMAGE_WIDTH)) begin
-                edge_dilate_line[edge_x_q] <= edge_core_q; //【HX1P35A-移植适配】写入寄存后的融合边缘供下一行加粗。
-                edge_dilate_left <= edge_core_q; //【HX1P35A-移植适配】保存寄存后的融合边缘供下一像素水平加粗。
-                edge_dilate_above_left <= (edge_x_q == 0) ? 1'b0 : edge_dilate_above; //【HX1P35A-移植适配】保存上一行左上边缘供斜向加粗。
+            if (refined_de && (refined_x < IMAGE_WIDTH)) begin
+                edge_dilate_left <= refined_edge;
+                edge_dilate_above_left <= (refined_x == 0) ? 1'b0 : edge_dilate_above;
             end
 
             if (frame_start) begin
                 //【HX1P35A-移植适配】锁存上一帧跟踪结果、BCD 信息及主颜色，再初始化本帧统计。
-                O_target_found <= cur_frame_valid;
                 O_target_pixels <= cur_count;
+                pixel_count_bcd <= bin24_to_bcd6(clipped_count); // Never substitute an old area during HOLD/LOST.
+                target_fresh <= cur_frame_valid;
                 if (cur_frame_valid) begin
+                    O_target_found <= 1'b1;
+                    target_miss_count <= 0;
                     box_xmin <= next_box_xmin; box_xmax <= next_box_xmax;
                     box_ymin <= next_box_ymin; box_ymax <= next_box_ymax;
                     center_x_bcd <= bin11_to_bcd4(next_center_x);
                     center_y_bcd <= bin11_to_bcd4(next_center_y);
-                    pixel_count_bcd <= bin24_to_bcd6(clipped_count);
                     if ((cur_red_count >= cur_green_count) && (cur_red_count >= cur_blue_count)) box_color <= 2'd1;
                     else if (cur_green_count >= cur_blue_count) box_color <= 2'd2;
                     else box_color <= 2'd3;
+                end else if (O_target_found && (target_miss_count < TARGET_HOLD_FRAMES)) begin
+                    // No measurement: retain the last valid colour/box/centre for a bounded interval.
+                    // Saturation at the hold budget avoids counter wrap and indefinite stale locks.
+                    target_miss_count <= target_miss_count + 1'b1;
                 end else begin
+                    O_target_found <= 1'b0;
+                    target_miss_count <= 0;
                     box_color <= 2'd0;
-                    center_x_bcd <= 0; center_y_bcd <= 0; pixel_count_bcd <= 0;
+                    box_xmin <= 0; box_xmax <= 0; box_ymin <= 0; box_ymax <= 0;
+                    center_x_bcd <= 0; center_y_bcd <= 0;
                 end
                 cur_count <= target_hit ? 24'd1 : 24'd0;
                 cur_red_count <= red_hit ? 24'd1 : 24'd0;
@@ -805,8 +977,6 @@ module hx_vision_pipeline #(
         end
     end
 endmodule
-<<<<<<< Updated upstream
-=======
 
 // Binary edge postprocessing BEFORE dilation: never feed filled pixels back into
 // the same pass. Two independent windows keep removed speckles out of bridging.
@@ -841,8 +1011,8 @@ module hx_centered_display #(
     parameter integer GAIN_SHIFT=1
 ) (
     input wire clk,rst_n,
-    input wire [55:0] payload,
-    output reg [55:0] delayed,
+    input wire [54:0] payload,
+    output reg [54:0] delayed,
     output reg signed [8:0] delta
 );
     reg [10:0] slot;
@@ -851,14 +1021,14 @@ module hx_centered_display #(
     wire [10:0] x=payload[45:35], y=payload[34:24];
     wire [15:0] luma_sum=payload[23:16]*8'd77+payload[15:8]*8'd150+payload[7:0]*8'd29;
     wire [7:0] gray=luma_sum[15:8];
-    wire [55:0] fifo_read;
+    wire [54:0] fifo_read;
     wire [28:0] rows;
     // Two luma rows + two mode-valid rows + previous row's clock-slot tag.
     hx_eram_line_store #(.DATA_WIDTH(29)) u_rows (
         .clk(clk),.rd_addr(x),.wr_addr(x),.wr_en(rst_n && de && x<IMAGE_WIDTH),
-        .wr_data({slot,rows[16],payload[55],rows[7:0],gray}),.rd_data(rows)
+        .wr_data({slot,rows[16],payload[54],rows[7:0],gray}),.rd_data(rows)
     );
-    hx_eram_line_store #(.DATA_WIDTH(56)) u_video_slots (
+    hx_eram_line_store #(.DATA_WIDTH(55)) u_video_slots (
         .clk(clk),.rd_addr(slot),.wr_addr(slot),.wr_en(rst_n),
         .wr_data(payload),.rd_data(fifo_read)
     );
@@ -897,7 +1067,7 @@ module hx_centered_display #(
         end else begin
             slot<=slot+1'b1;
             if(warm<2048)warm<=warm+1'b1;
-            delayed<=warm==2048 ? fifo_read : 56'd0;
+            delayed<=warm==2048 ? fifo_read : 55'd0;
             delta<=warm==2048 ? $signed(correction_read) : 9'sd0;
             // First stage only captures RAM outputs. Arithmetic starts on a
             // full-cycle registered path, not the half-cycle ERAM read path.
@@ -907,7 +1077,7 @@ module hx_centered_display #(
             center0<=mid1;tag[0]<=midtag1;
             valid[0]<=de && x>=2 && y>=2 && x<IMAGE_WIDTH &&
                 topv2 && topv1 && rows[17] && midv2 && midv1 && rows[16] &&
-                botv2 && botv1 && payload[55];
+                botv2 && botv1 && payload[54];
             for(k=1;k<6;k=k+1)begin valid[k]<=valid[k-1];tag[k]<=tag[k-1];end
             row0<={2'd0,taps[0]}+({2'd0,taps[1]}<<1)+{2'd0,taps[2]};
             row1<={2'd0,taps[3]}+({2'd0,taps[4]}<<1)+{2'd0,taps[5]};
@@ -920,10 +1090,10 @@ module hx_centered_display #(
             if(de && x<IMAGE_WIDTH) begin
                 if(x==0) begin
                     top2<=0;top1<=rows[15:8];mid2<=0;mid1<=rows[7:0];bot2<=0;bot1<=gray;
-                    topv2<=0;topv1<=rows[17];midv2<=0;midv1<=rows[16];botv2<=0;botv1<=payload[55];
+                    topv2<=0;topv1<=rows[17];midv2<=0;midv1<=rows[16];botv2<=0;botv1<=payload[54];
                 end else begin
                     top2<=top1;top1<=rows[15:8];mid2<=mid1;mid1<=rows[7:0];bot2<=bot1;bot1<=gray;
-                    topv2<=topv1;topv1<=rows[17];midv2<=midv1;midv1<=rows[16];botv2<=botv1;botv1<=payload[55];
+                    topv2<=topv1;topv1<=rows[17];midv2<=midv1;midv1<=rows[16];botv2<=botv1;botv1<=payload[54];
                 end
                 midtag1<=rows[28:18];
             end
@@ -1157,4 +1327,3 @@ module hx_reset_release (
     end
     assign rst_n=release_sync[1];
 endmodule
->>>>>>> Stashed changes
