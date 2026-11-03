@@ -13,7 +13,7 @@ module tb_template_overlay #(parameter integer GLOBAL_SCENARIO=0);
     // 关闭显示框平滑：本用例断言的是框位置与跟踪精度的精确对应关系。
     defparam dut.g_template.u_tracker.DISP_SMOOTH_SHIFT=0;
     defparam dut.g_template.u_tracker.DISP_DEADBAND=0;
-    hx_vision_pipeline #(.IMAGE_WIDTH(W),.IMAGE_HEIGHT(H),.ENABLE_TEMPLATE_TRACKING(1)) dut (
+    hx_vision_pipeline #(.IMAGE_WIDTH(W),.IMAGE_HEIGHT(H),.ENABLE_TEMPLATE_TRACKING(1),.TEMPLATE_FRAME_SIZE(64)) dut (
         .I_clk(clk),.I_rst_n(rst),.I_vsync(vs),.I_hsync(hs),.I_de(de),.I_user(user),.I_last(last),
         .I_rgb(rgb),.I_mode(mode),.I_template_command(command),.I_raw_sharpen_enable(1'b0),
         .I_exposure_level(2'd1),.I_auto_exposure(1'b0),.I_applied_exposure(16'd1200),
@@ -95,7 +95,7 @@ module tb_template_overlay #(parameter integer GLOBAL_SCENARIO=0);
                     if(fq[q]==(GLOBAL_SCENARIO==2 ?56:52) || fq[q]==(GLOBAL_SCENARIO==2 ?57:53))color=24'hffff00;
                 end
                 row_tpl=yq[q]>=32 && yq[q]<48 && xq[q]<224;
-                border=(fq[q]!=4 || GLOBAL_SCENARIO) &&
+                border=
                     (((xq[q]==ex-32 || xq[q]==ex+31) && yq[q]>=ey-32 && yq[q]<ey+32) ||
                      ((yq[q]==ey-32 || yq[q]==ey+31) && xq[q]>=ex-32 && xq[q]<ex+32));
                 if(row_tpl)begin

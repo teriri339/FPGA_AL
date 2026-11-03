@@ -10,7 +10,8 @@ module hx_template_tracker #(
     parameter integer MAX_MEAN_ERROR=12,MIN_UNIQUENESS=64,MIN_TEXTURE=384,
     parameter integer AUTO_REACQUIRE=1,REACQUIRE_CONFIRM_FRAMES=3,
     parameter integer EXPANDED_REACQUIRE=1,FAR_REACQUIRE=1,
-    parameter integer GLOBAL_REACQUIRE=1,FAST_REACQUIRE=1, ENABLE_MOTION_PREDICTION=1, PREDICTION_MIN_MARGIN=MIN_UNIQUENESS
+    parameter integer GLOBAL_REACQUIRE=1,FAST_REACQUIRE=1, ENABLE_MOTION_PREDICTION=1, PREDICTION_MIN_MARGIN=MIN_UNIQUENESS,
+    parameter integer SEARCH_RADIUS=8, EARLY_RECOVERY=0, ADAPTIVE_TEMPLATE=0
 ) (
     input wire clk,rst_n,command,de,
     input wire [10:0] x,y,
@@ -24,12 +25,18 @@ module hx_template_tracker #(
 );
     localparam READY=0,LEARN=1,TRACK=2,HOLD=3,LOST=4,FLAT=5,VERIFY=6;
     localparam IDLE=0,ISSUE=1,WAIT_READ=2,ACC=3,NEXT=4,FINISH=5,
-               CHECK_ISSUE=6,CHECK_WAIT=7,CHECK_ACC=8;
+               CHECK_ISSUE=6,CHECK_WAIT=7,CHECK_ACC=8, UPDATE_ISSUE=9,UPDATE_WAIT=10,UPDATE_ACC=11,UPDATE_COMMIT=12;
     localparam J_LEARN=0,J_MEAN=1,J_SCORE=2;
-    localparam SEARCH_RADIUS=8;
     localparam TILE_SIZE=64+2*SEARCH_RADIUS;
     localparam TILE_PIXELS=TILE_SIZE*TILE_SIZE;
     localparam COARSE_LAST=(SEARCH_RADIUS+1)*(SEARCH_RADIUS+1)-1;
+    localparam COARSE_ADDR_BITS=$clog2(COARSE_LAST+1);
+    // synthesis translate_off
+    initial begin
+        if(SEARCH_RADIUS!=8 && SEARCH_RADIUS!=12)
+            $fatal(1,"Supported SEARCH_RADIUS values are 8 and 12");
+    end
+    // synthesis translate_on
     reg [3:0] phase;
     reg [1:0] job;
     reg [10:0] cx,cy,roi_x,roi_y,best_x,best_y,coarse_x,coarse_y,second_x,second_y;
@@ -37,6 +44,8 @@ module hx_template_tracker #(
     // uses a Q4 fixed-point beta=1/2 update on reliable, consecutive matches.
     // Independently implemented from the alpha-beta concept; no external RTL.
     reg signed [8:0] velocity_x,velocity_y;
+    reg signed [8:0] hold_velocity_x,hold_velocity_y;
+    reg stationary_x,stationary_y;
     function signed [8:0] bounded_velocity;
         input [10:0] current,previous;
         input signed [8:0] previous_velocity;
@@ -70,11 +79,24 @@ module hx_template_tracker #(
                 prediction>limit-32 ? limit-32 : prediction[10:0];
         end
     endfunction
+    function [10:0] first_hold_center;
+        input [10:0] position;
+        input signed [8:0] velocity;
+        input integer limit;
+        reg signed [12:0] prediction,step;
+        begin
+            // The last accepted measurement is now two frames old.
+            step=$signed(velocity);
+            step=(step+(step[12] ? 13'sd7 : 13'sd8)) >>> 4;
+            prediction=$signed({2'b0,position})+(step <<< 1);
+            first_hold_center=prediction<32 ? 11'd32 : prediction>limit-32 ? limit-32 : prediction[10:0];
+        end
+    endfunction
     reg armed,template_valid,collect,learn_frame,fine,fine_pass,checking_final;
     reg [4:0] misses;
     reg retry_center;
     // Even pairs revisit the two anchors; odd pairs visit one neighbouring
-    // window. Each frame still captures/computes exactly one 80x80 tile.
+    // window. Each frame captures/computes exactly one local tile.
     reg [3:0] retry_step;
     reg [1:0] retry_cadence;
     reg [3:0] far_x,far_y;
@@ -88,13 +110,21 @@ module hx_template_tracker #(
     reg [3:0] confirm_count;
     reg [10:0] pending_x,pending_y;
     reg [6:0] learn_count;
-    reg [6:0] index,check_index;
+    reg [COARSE_ADDR_BITS-1:0] index,check_index;
     reg [12:0] patch_count,patch_addr;
     reg [13:0] learn_sum,mean_sum;
     reg [7:0] learn_min,learn_max,template_mean,candidate_mean;
     reg [7:0] template_mem[0:63];
+    reg [10:0] adaptive_mem[0:63],update_mem[0:63];
+    reg [10:0] adaptive_fixed_q;
+    reg [7:0] original_q,adaptive_mean,best_mean;
+    reg adaptive_valid,use_adaptive;
+    reg [1:0] reliable_frames;
+    reg [14:0] anchor_error;
+    reg [13:0] update_sum;
+    reg [7:0] update_min,update_max;
     // Keep the dense search tile in dedicated ERAM, not distributed LUT RAM.
-    // 6400 bytes and 81 scores need only 13-bit and 7-bit addresses respectively.
+    // Radius 8: 6400 bytes / 81 scores; radius 12: 7744 bytes / 169 scores.
     (* ram_style="bram" *) reg [7:0] patch_mem[0:TILE_PIXELS-1];
     reg [14:0] coarse_scores[0:COARSE_LAST];
     reg [14:0] coarse_q,score_sum,best,second_best;
@@ -103,6 +133,21 @@ module hx_template_tracker #(
     reg [5:0] template_addr,sample;
     reg [7:0] template_q,patch_q;
     reg [3:0] candidate_x,candidate_y,check_x,check_y;
+    wire [10:0] update_old=adaptive_valid ? adaptive_fixed_q : {original_q,3'b000};
+    wire signed [11:0] update_delta=$signed({1'b0,patch_q,3'b000})-$signed({1'b0,update_old});
+    wire signed [11:0] update_step=(update_delta+(update_delta[11] ? 12'sd1 : 12'sd2)) >>> 2;
+    wire [10:0] update_fixed=$signed({1'b0,update_old})+update_step;
+    wire [10:0] update_rounded=update_fixed+11'd4;
+    wire [7:0] update_value=update_rounded[10:3];
+    wire [13:0] update_sum_next=update_sum+update_value;
+    wire signed [9:0] anchor_difference=$signed({2'b0,patch_q})-$signed({2'b0,best_mean})-
+        $signed({2'b0,original_q})+$signed({2'b0,template_mean});
+    wire [9:0] anchor_abs=anchor_difference[9] ? -anchor_difference : anchor_difference;
+    wire [14:0] anchor_error_next=anchor_error+anchor_abs;
+    wire [6:0] update_x=best_x-30-roi_x+{sample[2:0],3'b000};
+    wire [6:0] update_y=best_y-30-roi_y+{sample[5:3],3'b000};
+    wire [12:0] update_address=update_y*TILE_SIZE+update_x;
+    wire [7:0] matching_mean=use_adaptive ? adaptive_mean : template_mean;
     wire frame_start=de && x==0 && y==0;
     wire frame_end=de && x==IMAGE_WIDTH-1 && y==IMAGE_HEIGHT-1;
     wire recovering=AUTO_REACQUIRE && (status==LOST || status==VERIFY);
@@ -142,7 +187,7 @@ module hx_template_tracker #(
     generate if(FAST_REACQUIRE && AUTO_REACQUIRE)begin : g_fast
         hx_template_coarse_proposer #(.IMAGE_WIDTH(IMAGE_WIDTH),.IMAGE_HEIGHT(IMAGE_HEIGHT)) u_proposer (
             .clk(clk),.rst_n(rst_n),.command(command),.de(de),.x(x),.y(y),.luma(luma),
-            .learn_start(armed),.template_accepted(template_valid),.search_allowed(recovering),
+            .learn_start(armed),.template_accepted(template_valid),.search_allowed(recovering || (EARLY_RECOVERY && status==HOLD)),
             .proposal_ack(frame_start && !busy && fast_active),
             .proposal_valid(fast_available),.proposal_x(fast_x),.proposal_y(fast_y)
         );
@@ -174,9 +219,11 @@ module hx_template_tracker #(
     wire [10:0] global_y_next=!recovering ? 11'd32 : recovery_slot_global ? global_y_after : global_y;
     wire [10:0] search_x=status==VERIFY ? pending_x :
         (AUTO_REACQUIRE && status==LOST) ? (fast_active ? fast_x : global_active ? global_x : far_active ? far_search_x : shifted_center(anchor_x,retry_dx,IMAGE_WIDTH)) :
+        (EARLY_RECOVERY && ENABLE_MOTION_PREDICTION && status==HOLD && misses==1) ? first_hold_center(cx,hold_velocity_x,IMAGE_WIDTH) :
         (ENABLE_MOTION_PREDICTION && status==TRACK) ? predicted_center(cx,velocity_x,IMAGE_WIDTH) : cx;
     wire [10:0] search_y=status==VERIFY ? pending_y :
         (AUTO_REACQUIRE && status==LOST) ? (fast_active ? fast_y : global_active ? global_y : far_active ? far_search_y : shifted_center(anchor_y,retry_dy,IMAGE_HEIGHT)) :
+        (EARLY_RECOVERY && ENABLE_MOTION_PREDICTION && status==HOLD && misses==1) ? first_hold_center(cy,hold_velocity_y,IMAGE_HEIGHT) :
         (ENABLE_MOTION_PREDICTION && status==TRACK) ? predicted_center(cy,velocity_y,IMAGE_HEIGHT) : cy;
     wire [10:0] next_roi_x=search_x<TILE_SIZE/2 ? 11'd0 : search_x>IMAGE_WIDTH-TILE_SIZE/2 ? IMAGE_WIDTH-TILE_SIZE : search_x-TILE_SIZE/2;
     wire [10:0] next_roi_y=search_y<TILE_SIZE/2 ? 11'd0 : search_y>IMAGE_HEIGHT-TILE_SIZE/2 ? IMAGE_HEIGHT-TILE_SIZE : search_y-TILE_SIZE/2;
@@ -197,12 +244,12 @@ module hx_template_tracker #(
     wire [5:0] read_sample=phase==WAIT_READ ? 6'd1 : phase==ACC ? sample+6'd2 : sample;
     wire [6:0] read_x=cand_cx-30-roi_x+{read_sample[2:0],3'b000};
     wire [6:0] read_y=cand_cy-30-roi_y+{read_sample[5:3],3'b000};
-    wire [12:0] read_address=({6'd0,read_y}<<6)+({6'd0,read_y}<<4)+read_x;
-    wire [12:0] write_address=({6'd0,tile_y[6:0]}<<6)+({6'd0,tile_y[6:0]}<<4)+tile_x[6:0];
+    wire [12:0] read_address=read_y*TILE_SIZE+read_x;
+    wire [12:0] write_address=tile_y[6:0]*TILE_SIZE+tile_x[6:0];
     wire signed [9:0] difference=job==J_LEARN ?
         $signed({2'b0,template_q})-$signed({2'b0,template_mean}) :
         $signed({2'b0,patch_q})-$signed({2'b0,candidate_mean})-
-        $signed({2'b0,template_q})+$signed({2'b0,template_mean});
+        $signed({2'b0,template_q})+$signed({2'b0,matching_mean});
     wire [9:0] error_value=difference[9] ? $unsigned(-difference) : $unsigned(difference);
     wire [14:0] score_next=score_sum+{5'd0,error_value};
     wire [13:0] mean_next=mean_sum+{6'd0,patch_q};
@@ -220,15 +267,25 @@ module hx_template_tracker #(
     assign center_y=status==VERIFY ? pending_y : cy;
     assign debug_misses=misses;
     always @(posedge clk)begin
-        template_q<=template_mem[template_addr];patch_q<=patch_mem[patch_addr];
+        template_q<=use_adaptive ? ((adaptive_mem[template_addr]+11'd4)>>3) : template_mem[template_addr];
+        original_q<=template_mem[template_addr];adaptive_fixed_q<=adaptive_mem[template_addr];patch_q<=patch_mem[patch_addr];
         coarse_q<=coarse_scores[check_index];
-        if(rst_n && take_learn)template_mem[{ly[5:3],lx[5:3]}]<=luma;
+        if(rst_n && take_learn)begin
+            template_mem[{ly[5:3],lx[5:3]}]<=luma;
+            if(ADAPTIVE_TEMPLATE)adaptive_mem[{ly[5:3],lx[5:3]}]<={luma,3'b000};
+        end
+        if(ADAPTIVE_TEMPLATE && rst_n && !command && !frame_start)begin
+            if(phase==UPDATE_ACC)update_mem[sample]<=update_fixed;
+            if(phase==UPDATE_COMMIT)adaptive_mem[sample]<=update_mem[sample];
+        end
         if(rst_n && take_patch)patch_mem[write_address]<=luma;
         if(rst_n && phase==ACC && job==J_SCORE && sample==63 && !fine)coarse_scores[index]<=score_next;
     end
     always @(posedge clk or negedge rst_n)begin
         if(!rst_n)begin
-            status<=READY;phase<=IDLE;job<=J_LEARN;cx<=IMAGE_WIDTH/2;cy<=IMAGE_HEIGHT/2;velocity_x<=0;velocity_y<=0;
+            adaptive_valid<=0;use_adaptive<=0;reliable_frames<=0;adaptive_mean<=0;best_mean<=0;
+            anchor_error<=0;update_sum<=0;update_min<=255;update_max<=0;
+            status<=READY;phase<=IDLE;job<=J_LEARN;cx<=IMAGE_WIDTH/2;cy<=IMAGE_HEIGHT/2;velocity_x<=0;velocity_y<=0;hold_velocity_x<=0;hold_velocity_y<=0;stationary_x<=0;stationary_y<=0;
             roi_x<=0;roi_y<=0;coarse_x<=0;coarse_y<=0;best_x<=0;best_y<=0;second_x<=0;second_y<=0;
             armed<=0;template_valid<=0;collect<=0;learn_frame<=0;fine<=0;fine_pass<=0;checking_final<=0;misses<=0;
             retry_center<=0;retry_step<=0;confirm_count<=0;pending_x<=IMAGE_WIDTH/2;pending_y<=IMAGE_HEIGHT/2;
@@ -242,7 +299,8 @@ module hx_template_tracker #(
             pass_best<=32767;first_best<=32767;pass_x<=0;pass_y<=0;first_x<=0;first_y<=0;
             debug_reason<=0;debug_best<=32767;debug_margin<=0;
         end else if(command)begin
-            phase<=IDLE;collect<=0;learn_frame<=0;template_valid<=0;misses<=0;velocity_x<=0;velocity_y<=0;
+            adaptive_valid<=0;use_adaptive<=0;reliable_frames<=0;
+            phase<=IDLE;collect<=0;learn_frame<=0;template_valid<=0;misses<=0;velocity_x<=0;velocity_y<=0;hold_velocity_x<=0;hold_velocity_y<=0;stationary_x<=0;stationary_y<=0;
             retry_center<=0;retry_step<=0;confirm_count<=0;
             retry_cadence<=0;far_x<=0;far_y<=0;far_center<=0;recovery_slot_far<=0;
             global_warmup<=0;global_turn<=0;global_x<=32;global_y<=32;recovery_slot_global<=0;
@@ -253,7 +311,8 @@ module hx_template_tracker #(
             if(status==READY || status==LOST || status==FLAT)begin armed<=1;status<=LEARN;end
             else begin armed<=0;status<=READY;end
         end else if(frame_start && busy)begin
-            velocity_x<=0;velocity_y<=0;
+            adaptive_valid<=0;use_adaptive<=0;reliable_frames<=0;
+            velocity_x<=0;velocity_y<=0;hold_velocity_x<=0;hold_velocity_y<=0;stationary_x<=0;stationary_y<=0;
             phase<=IDLE;collect<=0;learn_frame<=0;debug_reason<=5;
             if(job==J_LEARN)begin status<=FLAT;template_valid<=0;end
             else if(AUTO_REACQUIRE && (recovering || misses>=HOLD_FRAMES-1))begin
@@ -265,8 +324,11 @@ module hx_template_tracker #(
             else if(misses>=HOLD_FRAMES-1)begin status<=LOST;template_valid<=0;end
             else begin status<=HOLD;misses<=misses+1'b1;end
         end else begin
-            if(status!=TRACK)begin velocity_x<=0;velocity_y<=0;end
+            if(status!=TRACK)reliable_frames<=0;
+            if(status!=TRACK && status!=HOLD)adaptive_valid<=0;
+            if(status!=TRACK)begin velocity_x<=0;velocity_y<=0;stationary_x<=0;stationary_y<=0;end
             if(frame_start)begin
+                use_adaptive<=ADAPTIVE_TEMPLATE && adaptive_valid && (status==TRACK || status==HOLD);
                 recovery_slot_far<=far_active;
                 recovery_slot_global<=global_active;
                 recovery_slot_fast<=fast_active;
@@ -282,7 +344,7 @@ module hx_template_tracker #(
             if(frame_end)begin
                 collect<=0;learn_frame<=0;
                 if(learn_frame)begin
-                    if(learn_count==64)begin template_mean<=learn_sum[13:6];job<=J_LEARN;sample<=0;score_sum<=0;phase<=ISSUE;end
+                    if(learn_count==64)begin adaptive_mean<=learn_sum[13:6];template_mean<=learn_sum[13:6];job<=J_LEARN;sample<=0;score_sum<=0;phase<=ISSUE;end
                     else begin status<=FLAT;template_valid<=0;debug_reason<=4;end
                 end else if(collect)begin
                     // Bottom-right ROI includes the last active pixel. Count
@@ -321,12 +383,12 @@ module hx_template_tracker #(
                         else if(job==J_LEARN)begin
                             phase<=IDLE;
                             if(learn_max-learn_min<24 || score_next<MIN_TEXTURE)begin status<=FLAT;template_valid<=0;debug_reason<=6;end
-                            else begin status<=TRACK;template_valid<=1;misses<=0;debug_reason<=8;end
+                            else begin status<=TRACK;template_valid<=1;adaptive_valid<=ADAPTIVE_TEMPLATE;misses<=0;debug_reason<=8;end
                         end else begin
                             if(fine && score_next<pass_best)begin pass_best<=score_next;pass_x<=cand_cx;pass_y<=cand_cy;end
                             if(score_next<best)begin
                                 if(!fine)begin second_best<=best;second_x<=best_x;second_y<=best_y;end
-                                best<=score_next;best_x<=cand_cx;best_y<=cand_cy;
+                                best<=score_next;best_x<=cand_cx;best_y<=cand_cy;best_mean<=candidate_mean;
                             end else if(!fine && score_next<second_best)begin
                                 second_best<=score_next;second_x<=cand_cx;second_y<=cand_cy;
                             end
@@ -376,7 +438,18 @@ module hx_template_tracker #(
                     end
                 end
                 FINISH:begin
-                    phase<=IDLE;debug_best<=best;debug_margin<=second_best>=best ? second_best-best : 0;
+                    phase<=IDLE;
+                    if(ADAPTIVE_TEMPLATE)begin
+                        if(status==TRACK && best<=MAX_MEAN_ERROR*64 && best<=8*64 &&
+                           {1'b0,second_best}>={1'b0,best}+MIN_UNIQUENESS && {1'b0,second_best}>={1'b0,best}+128)begin
+                            if(reliable_frames==2)begin
+                                reliable_frames<=0;sample<=0;anchor_error<=0;update_sum<=0;update_min<=255;update_max<=0;
+                                phase<=UPDATE_ISSUE;
+                            end else reliable_frames<=reliable_frames+1'b1;
+                        end else reliable_frames<=0;
+                    end
+                    if(status==TRACK)begin hold_velocity_x<=velocity_x;hold_velocity_y<=velocity_y;end
+                    debug_best<=best;debug_margin<=second_best>=best ? second_best-best : 0;
                     debug_reason<=best>MAX_MEAN_ERROR*64 ? 2 : ({1'b0,second_best}<{1'b0,best}+MIN_UNIQUENESS) ? 3 : 1;
                     if(best<=MAX_MEAN_ERROR*64 && {1'b0,second_best}>={1'b0,best}+MIN_UNIQUENESS)begin
                         if(recovering)begin
@@ -397,9 +470,14 @@ module hx_template_tracker #(
                         end else begin
                             // Configurable confidence gate for predictive velocity updates.
                             if(status==TRACK && {1'b0,second_best}>={1'b0,best}+PREDICTION_MIN_MARGIN)begin
-                                velocity_x<=bounded_velocity(best_x,cx,velocity_x);
-                                velocity_y<=bounded_velocity(best_y,cy,velocity_y);
-                            end else begin velocity_x<=0;velocity_y<=0;end
+                                // A single duplicate/quantized measurement need not mean a stop.
+                                // Keep one frame of speed; two stationary measurements clear it.
+                                if(!(EARLY_RECOVERY && best_x==cx && !stationary_x))
+                                    velocity_x<=bounded_velocity(best_x,cx,velocity_x);
+                                if(!(EARLY_RECOVERY && best_y==cy && !stationary_y))
+                                    velocity_y<=bounded_velocity(best_y,cy,velocity_y);
+                                stationary_x<=best_x==cx;stationary_y<=best_y==cy;
+                            end else begin velocity_x<=0;velocity_y<=0;stationary_x<=0;stationary_y<=0;end
                             cx<=best_x;cy<=best_y;status<=TRACK;misses<=0;confirm_count<=0;retry_center<=0;retry_step<=0;
                             retry_cadence<=0;far_x<=0;far_y<=0;far_center<=0;
                             global_warmup<=0;global_turn<=0;global_x<=32;global_y<=32;
@@ -412,6 +490,23 @@ module hx_template_tracker #(
                         fast_turn<=fast_turn_next;
                     end else if(misses>=HOLD_FRAMES-1)begin status<=LOST;template_valid<=0;end
                     else begin status<=HOLD;misses<=misses+1'b1;end
+                end
+                UPDATE_ISSUE:begin template_addr<=sample;patch_addr<=update_address;phase<=UPDATE_WAIT;end
+                UPDATE_WAIT:phase<=UPDATE_ACC;
+                UPDATE_ACC:begin
+                    anchor_error<=anchor_error_next;update_sum<=update_sum_next;
+                    if(patch_q<update_min)update_min<=patch_q;
+                    if(patch_q>update_max)update_max<=patch_q;
+                    if(sample==63)begin
+                        sample<=0;
+                        if(anchor_error_next<=24*64 && update_max-update_min>=24)phase<=UPDATE_COMMIT;
+                        else begin phase<=IDLE;reliable_frames<=0;end
+                    end else begin sample<=sample+1'b1;phase<=UPDATE_ISSUE;end
+                end
+                UPDATE_COMMIT:begin
+                    if(sample==63)begin
+                        adaptive_mean<=update_sum[13:6];adaptive_valid<=1;phase<=IDLE;
+                    end else sample<=sample+1'b1;
                 end
                 default:begin end
             endcase

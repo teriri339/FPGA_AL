@@ -31,6 +31,16 @@ module hx_button_mode_ctrl #(
     wire exposure_press=template_controls ? (release1 && !template_handled) : press1;
     reg [27:0] hold_count;
     reg long_handled;
+    function [1:0] next_display_mode;
+        input [1:0] current_mode;
+        begin
+            case(current_mode)
+                0:next_display_mode=1;
+                1:next_display_mode=3;
+                default:next_display_mode=0;
+            endcase
+        end
+    endfunction
 
     always @(posedge I_clk or negedge I_rst_n) begin
         if (!I_rst_n) begin
@@ -62,7 +72,7 @@ module hx_button_mode_ctrl #(
             else count1 <= count1 + 1'b1;
             if(!SELF_CALIBRATION)begin
                 if(release0)begin
-                    if(!long_handled)O_mode<=O_mode+1'b1;
+                    if(!long_handled)O_mode<=next_display_mode(O_mode);
                     long_handled<=0;
                     hold_count<=0;
                 end else if(!stable_state[0])begin
@@ -85,7 +95,7 @@ module hx_button_mode_ctrl #(
                     end else hold_count<=hold_count+1'b1;
                 end
                 if(release0)begin
-                    if(!long_handled && !I_cal_busy)O_mode<=O_mode+1'b1;
+                    if(!long_handled && !I_cal_busy)O_mode<=next_display_mode(O_mode);
                     long_handled<=0;hold_count<=0;
                 end
             end

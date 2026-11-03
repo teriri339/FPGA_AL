@@ -4,6 +4,9 @@ module hx_vision_pipeline #(
     parameter IMAGE_WIDTH = 1280,
     parameter IMAGE_HEIGHT = 720,
     parameter ENABLE_TEMPLATE_TRACKING = 0,
+    parameter integer TEMPLATE_FRAME_SIZE = 80,
+    parameter ENABLE_GRAY_CONTOURS = 1'b1,
+    parameter [7:0] GRAY_CONTOUR_THRESHOLD = 8'd32,
     parameter MIN_TARGET_PIXELS = 24'd800,
     // Mild Canny-only noise tuning; no change to exposure or RGB display.
     parameter SOBEL_THRESHOLD_DARK = 12'd48,
@@ -207,9 +210,6 @@ module hx_vision_pipeline #(
     wire green_hit = I_de && color_coherent && (raw_color == 2'd2); //【HX1P35A-移植适配】仅连续成片的绿色像素进入显示、统计和告警。
     wire blue_hit = I_de && color_coherent && (raw_color == 2'd3); //【HX1P35A-移植适配】仅连续成片的蓝色像素进入显示、统计和告警。
     wire target_hit = I_de && (red_hit || green_hit || blue_hit);
-    wire [23:0] target_mask_rgb = red_hit ? 24'hff0000 : green_hit ? 24'h00ff00 : blue_hit ? 24'h0000ff : 24'h000000;
-    wire [23:0] dim_rgb = {1'b0,I_rgb[23:17],1'b0,I_rgb[15:9],1'b0,I_rgb[7:1]}; //【HX1P35A-移植适配】保留半亮原图作为 COLOR 背景。
-    wire [23:0] color_overlay_rgb = target_hit ? target_mask_rgb : dim_rgb; //【HX1P35A-移植适配】目标高亮，未命中区域仍可观察。
 
     //【资源优化】ERAM 在 I_clk 下降沿预读当前地址，上升沿沿用原流水处理并写回，避免增加整拍延迟。
     hx_eram_line_store #(.DATA_WIDTH(18)) u_raw_color_line_store (
@@ -232,7 +232,8 @@ module hx_vision_pipeline #(
     wire [4:0] template_misses;
     wire [10:0] template_cx,template_cy;
     generate if(ENABLE_TEMPLATE_TRACKING)begin : g_template
-        hx_template_tracker #(.IMAGE_WIDTH(IMAGE_WIDTH),.IMAGE_HEIGHT(IMAGE_HEIGHT)) u_tracker (
+        hx_template_tracker #(.IMAGE_WIDTH(IMAGE_WIDTH),.IMAGE_HEIGHT(IMAGE_HEIGHT),.SEARCH_RADIUS(12),
+            .HOLD_FRAMES(10),.EARLY_RECOVERY(1),.ADAPTIVE_TEMPLATE(1)) u_tracker (
             .clk(I_clk),.rst_n(I_rst_n),.command(I_template_command),
             .de(gaussian_de_q),.x(gaussian_x_q),.y(gaussian_y_q),.luma(gaussian_gray_q),
             .status(template_status),.center_x(template_cx),.center_y(template_cy),.busy(),
@@ -574,9 +575,16 @@ module hx_vision_pipeline #(
         ((draw_x < 11'd432 && draw_y < 11'd32) || template_osd_region || (applied_osd_region && draw_x < 11'd864 && draw_y < 11'd16));
     wire osd_glyph = osd_background && (glyph_x < 3'd5) && (glyph_y < 3'd7) && glyph_bits[4-glyph_x];
     wire [23:0] osd_pixel_fg = template_osd_region ? template_fg : applied_osd_region ? applied_osd_fg : osd_fg;
-    wire template_border=ENABLE_TEMPLATE_TRACKING && !final_mode[1] && final_ctrl[2] &&
-        ((((draw_x==template_cx-32)||(draw_x==template_cx+31)) && draw_y>=template_cy-32 && draw_y<template_cy+32) ||
-         (((draw_y==template_cy-32)||(draw_y==template_cy+31)) && draw_x>=template_cx-32 && draw_x<template_cx+32));
+    // Display frame is independent of the 64x64 matching template.
+    // Clip bounds before subtraction to keep the border visible near the image edge.
+    localparam TEMPLATE_FRAME_HALF=TEMPLATE_FRAME_SIZE/2;
+    wire [10:0] template_left=template_cx<TEMPLATE_FRAME_HALF ? 0 : template_cx-TEMPLATE_FRAME_HALF;
+    wire [10:0] template_top=template_cy<TEMPLATE_FRAME_HALF ? 0 : template_cy-TEMPLATE_FRAME_HALF;
+    wire [10:0] template_right=template_cx+TEMPLATE_FRAME_HALF>=IMAGE_WIDTH ? IMAGE_WIDTH-1 : template_cx+TEMPLATE_FRAME_HALF-1;
+    wire [10:0] template_bottom=template_cy+TEMPLATE_FRAME_HALF>=IMAGE_HEIGHT ? IMAGE_HEIGHT-1 : template_cy+TEMPLATE_FRAME_HALF-1;
+    wire template_border=ENABLE_TEMPLATE_TRACKING && template_status==3'd2 && final_ctrl[2] &&
+        ((((draw_x==template_left)||(draw_x==template_right)) && draw_y>=template_top && draw_y<=template_bottom) ||
+         (((draw_y==template_top)||(draw_y==template_bottom)) && draw_x>=template_left && draw_x<=template_right));
 
     // Row 0: mode and manual preset; row 1: color tracking; row 2: last I2C-confirmed sensor values.
     always @(*) begin
@@ -599,7 +607,7 @@ module hx_vision_pipeline #(
                             default:osd_char=" ";
                         endcase
                         2'd1: case(osd_col) 6:osd_char="G";7:osd_char="R";8:osd_char="A";9:osd_char="Y";default:osd_char=" ";endcase
-                        2'd2: case(osd_col) 6:osd_char="C";7:osd_char="O";8:osd_char="L";9:osd_char="O";10:osd_char="R";default:osd_char=" ";endcase
+                        2'd2: case(osd_col) 6:osd_char="R";7:osd_char="A";8:osd_char="W";default:osd_char=" ";endcase
                         default: case(osd_col) 6:osd_char="C";7:osd_char="A";8:osd_char="N";9:osd_char="N";10:osd_char="Y";default:osd_char=" ";endcase
                     endcase
                 end
@@ -701,6 +709,15 @@ module hx_vision_pipeline #(
     // Thus equal-luma chromatic edges are protected as well as luma edges.
     wire [25:0] display_above;
     reg [25:0] display_left, display_above_left;
+    // Causal two-direction contrast follows the current grayscale pixel.
+    // Reuse the display history; do not overlay the delayed Canny stream.
+    wire [7:0] gray_left_delta = gray > display_left[7:0] ?
+        gray-display_left[7:0] : display_left[7:0]-gray;
+    wire [7:0] gray_above_delta = gray > display_above[7:0] ?
+        gray-display_above[7:0] : display_above[7:0]-gray;
+    wire gray_contour = ENABLE_GRAY_CONTOURS && I_de && I_mode==2'd1 &&
+        (((pix_x>0) && display_left[25:24]==2'd1 && gray_left_delta>=GRAY_CONTOUR_THRESHOLD) ||
+         ((pix_y>0) && display_above[25:24]==2'd1 && gray_above_delta>=GRAY_CONTOUR_THRESHOLD));
     reg [29:0] display_sum_q;
     reg display_flat_q;
     function near_rgb;
@@ -731,6 +748,14 @@ module hx_vision_pipeline #(
             .wr_en(I_rst_n && I_de && (pix_x < IMAGE_WIDTH)),
             .wr_data({I_mode,display_source}), .rd_data(display_above)
         );
+    end else if (ENABLE_GRAY_CONTOURS) begin : g_gray_contour_history
+        wire [9:0] row_above;
+        hx_eram_line_store #(.DATA_WIDTH(10)) u_gray_row (
+            .clk(I_clk), .rd_addr(pix_x), .wr_addr(pix_x),
+            .wr_en(I_rst_n && I_de && (pix_x < IMAGE_WIDTH)),
+            .wr_data({I_mode,gray}), .rd_data(row_above)
+        );
+        assign display_above={row_above[9:8],row_above[7:0],row_above[7:0],row_above[7:0]};
     end else begin : g_no_display_denoise
         assign display_above = 26'd0;
     end endgenerate
@@ -739,7 +764,7 @@ module hx_vision_pipeline #(
             display_left <= 0; display_above_left <= 0;
             display_sum_q <= 0; display_flat_q <= 0;
         end else begin
-            display_flat_q <= ENABLE_DISPLAY_DENOISE && I_de && !I_mode[1] &&
+            display_flat_q <= ENABLE_DISPLAY_DENOISE && I_de && !I_mode[1] && !gray_contour &&
                 (pix_x > 0) && (pix_y > 0) &&
                 (display_left[25:24] == I_mode) && (display_above[25:24] == I_mode) &&
                 (display_above_left[25:24] == I_mode) &&
@@ -757,11 +782,10 @@ module hx_vision_pipeline #(
         end
     end
     reg [23:0] overlay_rgb;
-    //【HX1P35A-移植适配】00 原图、01 灰度、10 彩色目标掩膜、11 全屏轻量 Canny 边缘。
+    // 00 RAW, 01 grayscale/red contours, 11 Canny. Reserved 10 falls back to RAW.
     always @(*) begin
         case(I_mode)
-            2'd1: base_rgb = {gray,gray,gray};
-            2'd2: base_rgb = color_overlay_rgb; //【HX1P35A-移植适配】COLOR 不再因未命中目标而整屏全黑。
+            2'd1: base_rgb = gray_contour ? 24'hff0000 : {gray,gray,gray};
             2'd3: base_rgb = edge_display_pixel ? 24'hffffff : 24'h000000; //【HX1P35A-移植适配】Canny 输出使用强细节补偿和 2x2 加粗后的边缘。
             default: base_rgb = I_rgb;
         endcase
@@ -772,7 +796,6 @@ module hx_vision_pipeline #(
         if (osd_glyph) overlay_rgb = osd_pixel_fg;
         else if (osd_background) overlay_rgb = 24'h101018;
         else if (template_border) overlay_rgb = template_fg;
-        else if (box_border) overlay_rgb = target_holding ? 24'hffb040 : 24'hffff00;
         if (final_ctrl[2] && logo_active_q && logo_pixel_q[24]) overlay_rgb = logo_pixel_q[23:0];
         // Small top-right strip: gray=unlearned, blue=capturing, green=applied, red=invalid white field.
         if(ENABLE_CAL_STATUS && draw_y<6 && draw_x>=IMAGE_WIDTH-64)
